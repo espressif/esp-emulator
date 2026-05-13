@@ -15,7 +15,7 @@ This downloads the latest binary to `$HOME/.local/bin/esp-emu`. If `~/.local/bin
 Pin a specific version:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mahavirj/esp-emulator/main/install.sh | sh -s -- --version 0.29.0
+curl -fsSL https://raw.githubusercontent.com/mahavirj/esp-emulator/main/install.sh | sh -s -- --version 0.30.0
 ```
 
 Other options: `--check` (print latest, no install), `--bin-dir DIR`, `--force`, `--quiet`. Full help:

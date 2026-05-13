@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/mahavirj/esp-emulator/main/install.sh | sh
 #
 # Usage (with options):
-#   curl -fsSL https://.../install.sh | sh -s -- --version 0.29.0
+#   curl -fsSL https://.../install.sh | sh -s -- --version 0.30.0
 #   curl -fsSL https://.../install.sh | sh -s -- --bin-dir ~/bin
 #   curl -fsSL https://.../install.sh | sh -s -- --check
 #
