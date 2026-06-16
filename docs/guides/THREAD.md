@@ -22,7 +22,7 @@ driver functions are stubbed wholesale.
   │   ↕             │         │   ↕             │
   │ esp_ieee802154_*│ ← stub  │ esp_ieee802154_*│ ← stub
   │   ↓ frame       │         │   ↑ frame       │
-  │ thread_radio.rs │         │ thread_radio.rs │
+  │ 802.15.4 bridge │         │ 802.15.4 bridge │
   └────── UDP ──────┴─────────┴──── UDP ────────┘
 ```
 
@@ -59,8 +59,7 @@ Artefacts: `/tmp/ot_cli_c6/build/merged_flash.bin` and
 ./esp-emu \
   --chip esp32c6 \
   --firmware /tmp/ot_cli_c6/build/merged_flash.bin \
-  --elf /tmp/ot_cli_c6/build/esp_ot_cli.elf \
-  --timeout 40s
+  --elf /tmp/ot_cli_c6/build/esp_ot_cli.elf
 ```
 
 `--elf` is required — the emulator reads IEEE 802.15.4 driver symbols
@@ -127,15 +126,13 @@ sends to `:9001`:
 ./esp-emu --chip esp32c6 \
   --firmware /tmp/ot_cli_c6/build/merged_flash.bin \
   --elf /tmp/ot_cli_c6/build/esp_ot_cli.elf \
-  --thread-sim "bind:9001,peer:127.0.0.1:9002" \
-  --timeout 40s
+  --thread-sim "bind:9001,peer:127.0.0.1:9002"
 
 # shell B
 ./esp-emu --chip esp32c6 \
   --firmware /tmp/ot_cli_c6/build/merged_flash.bin \
   --elf /tmp/ot_cli_c6/build/esp_ot_cli.elf \
-  --thread-sim "bind:9002,peer:127.0.0.1:9001" \
-  --timeout 40s
+  --thread-sim "bind:9002,peer:127.0.0.1:9001"
 ```
 
 Whichever node starts first becomes Leader; the second node detects the
@@ -184,16 +181,14 @@ cd build && python -m esptool --chip esp32c6 merge-bin -o merged_flash.bin @flas
 ./esp-emu --chip esp32c6 \
   --firmware /tmp/ot_br_c6/build/merged_flash.bin \
   --elf /tmp/ot_br_c6/build/esp_ot_br.elf \
-  --thread-sim "bind:9001,peer:127.0.0.1:9002" \
-  --timeout 55s &
+  --thread-sim "bind:9001,peer:127.0.0.1:9002" &
 sleep 2
 
 # Device (port 9002)
 ./esp-emu --chip esp32c6 \
   --firmware /tmp/ot_cli_c6/build/merged_flash.bin \
   --elf /tmp/ot_cli_c6/build/esp_ot_cli.elf \
-  --thread-sim "bind:9002,peer:127.0.0.1:9001" \
-  --timeout 53s &
+  --thread-sim "bind:9002,peer:127.0.0.1:9001" &
 wait
 ```
 
@@ -256,8 +251,8 @@ They have different Active Datasets. Either:
   auto-load the identical compile-time dataset (recommended).
 - Or run `ot dataset active -x` on one node to print the TLV hex, then
   inject `ot dataset set active <hex>` on the other. This works thanks
-  to the level-triggered UART RX fix (see `src/periph/uart.rs`) — long
-  inject payloads (>31 bytes) now process correctly.
+  to the level-triggered UART RX fix — long inject payloads (>31 bytes)
+  now process correctly.
 
 **`assert(ret == sizeof(event_write))` on Node B after the first RX frame**
 
@@ -277,8 +272,6 @@ Rebuild the emulator from current source.
 
 ## Reference
 
-- Implementation: [`src/periph/thread_radio.rs`](../../src/periph/thread_radio.rs)
-- Interception dispatch: [`src/machine/rom_stubs.rs`](../../src/machine/rom_stubs.rs) (search for `thr_*`)
 - ESP-IDF sources:
   - `$IDF_PATH/components/openthread/src/port/esp_openthread_radio.c` — otPlatRadio → esp_ieee802154 wrappers and upcall implementations
   - `$IDF_PATH/components/ieee802154/include/esp_ieee802154.h` — public driver API

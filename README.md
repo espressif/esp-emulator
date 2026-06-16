@@ -331,8 +331,7 @@ attach times out (no peer to find).
 esp-emu \
   --chip esp32c6 \
   --firmware /tmp/ot_cli_c6/build/merged_flash.bin \
-  --elf /tmp/ot_cli_c6/build/esp_ot_cli.elf \
-  --timeout 40s
+  --elf /tmp/ot_cli_c6/build/esp_ot_cli.elf
 ```
 
 For **two-node** Thread networks, `--thread-sim bind:P,peer:H:P` bridges

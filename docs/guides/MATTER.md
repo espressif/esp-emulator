@@ -121,8 +121,7 @@ Note the `--ble-controller` number — you'll need it for chip-tool.
   --chip esp32c3 \
   --firmware build/merged_flash.bin \
   --elf build/light.elf \
-  --ble-hci tcp:localhost:9544 \
-  --timeout 180s
+  --ble-hci tcp:localhost:9544
 ```
 
 Wait for the firmware to print:
@@ -197,16 +196,15 @@ python3 tools/vhci_bridge.py &
   --firmware /tmp/matter-test.bin \
   --elf build/light.elf \
   --ble-hci tcp:localhost:9544 \
-  --save-state \
-  --timeout 60s
+  --save-state
 
 # Commission while running...
 chip-tool pairing ble-wifi 1 myssid mypassword 20202021 3840 --ble-controller 1
 
-# Let esp-emu exit via --timeout (or Ctrl+C) — flash is saved on clean exit
+# Stop esp-emu with Ctrl+C — flash is saved on clean exit
 ```
 
-**Important**: The flash is saved when esp-emu exits via timeout or Ctrl+C. Killing the process with `kill -9` bypasses the save.
+**Important**: The flash is saved when esp-emu exits cleanly (Ctrl+C). Killing the process with `kill -9` bypasses the save.
 
 ### Second boot: auto-join
 
@@ -215,8 +213,7 @@ chip-tool pairing ble-wifi 1 myssid mypassword 20202021 3840 --ble-controller 1
 ./esp-emu \
   --chip esp32c3 \
   --firmware /tmp/matter-test.bin \
-  --elf build/light.elf \
-  --timeout 60s
+  --elf build/light.elf
 ```
 
 The device boots, prints `Fabric already commissioned. Disabling BLE advertisement`, auto-connects to WiFi, and advertises `_matter._tcp` via mDNS. chip-tool can control it immediately:

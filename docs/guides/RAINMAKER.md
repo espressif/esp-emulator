@@ -121,8 +121,7 @@ esp-emu \
   --chip esp32c3 \
   --firmware build/merged_flash.bin \
   --elf build/switch.elf \
-  --ble-hci tcp:localhost:9544 \
-  --timeout 120s
+  --ble-hci tcp:localhost:9544
 ```
 
 Wait for the firmware to print the QR code line — the device name and PoP are randomized per boot:

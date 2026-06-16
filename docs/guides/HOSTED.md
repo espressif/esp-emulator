@@ -19,8 +19,8 @@ SDIO/SPI/UART. ESP-EMU emulates the SDIO transport between the two MCUs:
   │ SDMMC host driver           │         │ SDIO slave driver           │
   │   ↕                         │         │   ↕                         │
   │ Synopsys MSHC + IDMAC model │         │ SLC / SLCHOST model         │
-  │  (sdmmc_host.rs, BridgePeer)│         │  (sdio_slave.rs)            │
-  └────────── Unix SOCK_STREAM ─┴─────────┴── (sdio_bridge.rs) ─────────┘
+  │   (host-side SDIO bridge)   │         │   (slave-side SDIO model)   │
+  └────────── Unix SOCK_STREAM ─┴─────────┴── (SDIO transport) ─────────┘
 ```
 
 The bridge carries framed CMD52 / CMD53 / INT_RAISE messages. CMD52
@@ -96,8 +96,7 @@ RUST_LOG=info esp-emu \
   --firmware /tmp/hosted_c6_build/build/merged_flash.bin \
   --elf /tmp/hosted_c6_build/build/network_adapter.elf \
   --hosted bridge:slave:/tmp/hosted_demo.sock \
-  --net user \
-  --timeout 30s
+  --net user
 ```
 
 `--elf` is required for symbol-based interception of the slave-side
@@ -112,8 +111,7 @@ RUST_LOG=info esp-emu \
   --chip esp32p4 \
   --firmware /tmp/hosted_p4_build/build/merged_flash.bin \
   --elf /tmp/hosted_p4_build/build/peer_data_example.elf \
-  --hosted bridge:host:/tmp/hosted_demo.sock \
-  --timeout 25s
+  --hosted bridge:host:/tmp/hosted_demo.sock
 ```
 
 The host connects to the slave's Unix socket; the SDMMC host driver
@@ -219,17 +217,6 @@ examples, override the default Ethernet path with WiFi by adding
 gated on target) and setting `CONFIG_EXAMPLE_CONNECT_WIFI=y`,
 `CONFIG_EXAMPLE_WIFI_SSID="myssid"`,
 `CONFIG_EXAMPLE_WIFI_PASSWORD="mypassword"` in `sdkconfig.defaults`.
-
-## How it works (under the hood)
-
-For implementation details — sticky host→slave INTs, the dummy descriptor
-filter on `send_isr_invoker_enable`, streaming-mode CMD53 multi-packet
-packing, DAT1 edge sampling, IDMAC chain walking — refer to the source:
-
-- `src/periph/sdio_bridge.rs` — wire protocol + Unix socket transport
-- `src/periph/esp32p4/sdmmc_host.rs` — Synopsys MSHC + IDMAC model
-- `src/periph/esp32c6/sdio_slave.rs` — SLC + SLCHOST model
-- `src/mem/bus.rs` — `execute_pending_sdmmc_cmd53` + slave RX/TX walkers
 
 ## Debugging
 
