@@ -59,12 +59,14 @@ esp-emu --version        # print currently installed version
 
 Default ROM ELFs (C3 rev3, C6 rev0, P4 rev3) are embedded in the binary, so `--rom` is optional for the common case. Pass `--rom <path>` only to override with a different silicon revision or a custom ROM (e.g. from `~/.espressif/tools/esp-rom-elfs/`).
 
-### Running
+### Running (quick ESP-IDF example)
 
 ```sh
-esp-emu \
-  --chip esp32c3 \
-  --firmware build/merged_flash.bin
+cd esp-idf
+cd examples/protocols/https_request
+idf.py set-target esp32c3
+idf.py merge-bin
+esp-emu --chip esp32c3 --firmware build/merged-binary.bin
 ```
 
 ### CLI Options

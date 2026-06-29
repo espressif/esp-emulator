@@ -102,7 +102,8 @@ detect_platform() {
         Linux)
             case "$_arch" in
                 x86_64|amd64) printf '%s' 'x86_64-unknown-linux-gnu' ;;
-                *) die "unsupported Linux arch: $_arch (only x86_64 has prebuilt binaries; build from source)" ;;
+                arm64|aarch64) printf '%s' 'aarch64-unknown-linux-gnu' ;;
+                *) die "unsupported Linux arch: $_arch (only x86_64 and aarch64 have prebuilt binaries; build from source)" ;;
             esac
             ;;
         Darwin)
