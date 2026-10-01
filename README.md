@@ -15,7 +15,7 @@ This downloads the latest binary to `$HOME/.local/bin/esp-emu`. If `~/.local/bin
 Pin a specific version:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/espressif/esp-emulator/main/install.sh | sh -s -- --version 0.43.0
+curl -fsSL https://raw.githubusercontent.com/espressif/esp-emulator/main/install.sh | sh -s -- --version 0.45.0
 ```
 
 Other options: `--check` (print latest, no install), `--bin-dir DIR`, `--force`, `--quiet`. Full help:
@@ -38,8 +38,9 @@ esp-emu --version        # print currently installed version
 
 ## Features
 
-- **CPU**: Full RV32IMAC on C3/C5/C6/H2; RV32IMAFC (with single-precision FP via Berkeley SoftFloat) on P4; Xtensa LX7 (dual-core, windowed registers, zero-overhead loops, FPU) on S3. Multi-hart scheduler supports P4's dual HP cores. RV32 PMP and Espressif PMA enforced via a fused two-level page table — catches the same access violations as silicon (IDF panic memprot tests, TEE REE-vs-TEE isolation, IRAM/IROM write protection).
-- **WiFi**: Soft AP with WPA2-PSK, 802.11 management frames, DHCP server, and TAP networking for real connectivity
+- **CPU**: Full RV32IMAC on C3/C5/C6/H2; RV32IMAFC (with single-precision FP via Berkeley SoftFloat) on P4; Xtensa LX7 (dual-core, windowed registers, zero-overhead loops, FPU) on S3. Multi-hart scheduler supports P4's dual HP cores. RV32 PMP and Espressif PMA enforced via a fused two-level page table — catches the same access violations as silicon (IDF panic memprot tests, TEE REE-vs-TEE isolation, IRAM/IROM write protection). P4 also runs the PIE SIMD instructions that ESP-SR, esp-dl and esp-nn use.
+- **Access permission control**: the APM and TEE permission controllers (C5, C6, H2, S31) and P4's PMS are enforced for the CPU and DMA, so ESP-TEE and other isolation firmware sees the same faults and violation reports as silicon
+- **WiFi**: Soft AP with WPA2-PSK, WPA3-SAE (PMF, H2E, transition mode) and WPA2/WPA3-Enterprise (802.1X relayed to a RADIUS server), 802.11 management frames, DHCP server, and TAP networking for real connectivity
 - **Ethernet**: OpenCores Ethernet MAC (OpenETH) for QEMU-compatible `CONFIG_ETH_USE_OPENETH` firmware, plus Synopsys DesignWare GMAC for ESP32-P4's built-in EMAC
 - **Networking backends**: user-mode (zero-setup, QEMU-style NAT via smoltcp — DHCP, DNS forwarder, mDNS relay with optional record-rewriting NAT for Matter/HomeKit-style service discovery, IPv6 SLAAC, `hostfwd`, restrict mode, ICMP echo), TAP bridge (Linux), vmnet (macOS)
 - **BLE**: NimBLE host stack support with HCI forwarding to Bumble (virtual controller) or physical Linux HCI adapters
@@ -89,12 +90,15 @@ esp-emu --chip esp32c3 --firmware build/merged-binary.bin
 | `--inject-on <STRING>` | — | Trigger string in UART output that causes injection (paired with `--inject`). Repeatable. |
 | `--net <BACKEND>` | `tap0` if present on Linux, else `user` | Network backend: `user` (slirp-style, any OS), `user,hostfwd=tcp::H-:G,…`, `user,restrict=yes`, `user,dns=1.1.1.1`, `user,mdns-nat=yes` (Matter / mDNS service NAT), `tap,ifname=tap0` (Linux), `vmnet` (macOS) |
 | `--wifi-ssid <SSID>` | `myssid` | WiFi soft AP SSID broadcast to firmware |
-| `--wifi-password <PASS>` | `mypassword` | WPA2-PSK passphrase (8-63 chars). Empty string for open mode |
+| `--wifi-password <PASS>` | `mypassword` | Passphrase (8-63 chars) for WPA2-PSK and WPA3-SAE. Empty string for open mode |
+| `--wifi-auth <MODE>` | `wpa2-wpa3` | Soft AP security: `wpa2-wpa3` (transition), `wpa3-sae` (WPA3 only, PMF required), `wpa2-psk`, `open`, `wpa2-enterprise`, `wpa3-enterprise` |
+| `--wifi-radius <HOST:PORT,SECRET>` | — | RADIUS server the enterprise modes relay EAP to |
+| `--wifi-sae-pwe <PWE>` | `both` | SAE password element the AP accepts: `both`, `h2e`, `hunt-and-peck` |
 | `--ble-hci <BACKEND>` | — | BLE HCI backend: `tcp:host:port` for Bumble/virtual controller, `hci0` for Linux adapter |
 | `--thread-sim <SPEC>` | — | IEEE 802.15.4 / Thread bridge, e.g. `bind:9001,peer:127.0.0.1:9002`. Forwards radio frames over localhost UDP to another emulator instance. Requires `--elf`. |
 | `--uart-tcp <HOST:PORT>` | — | Bridge UART0 to a TCP server (e.g. `127.0.0.1:5555`); esptool connects via `socket://`. Mirrors QEMU's `-serial tcp::PORT,server,nowait`. While active, UART RX comes from the socket and TX goes to it (stdin/stdout disconnected). |
 | `--uart1-tcp <HOST:PORT>` | — | Bridge UART1 to a TCP server. Side channel for simulating an external serial device (sensor, GPS, modem) with a host-side script — UART0 keeps stdin/stdout and `--exit-on`/`--inject-on`. Without a connected client, UART1 TX is discarded. |
-| `--psram-size <SIZE>` | `16M` (P4, S31), `32M` (C5, S3) | External RAM the board is modelled with: `4M`/`8M`/`16M`/`32M`/`64M`, or `0` for no device. Only the chips with external RAM take it. Firmware cannot choose — see [PSRAM Size](#psram-size). |
+| `--psram-size <SIZE>` | `8M` (C5, S3), `16M` (P4, S31) | External RAM the board is modelled with: `4M`/`8M`/`16M`/`32M`/`64M`, or `0` for no device. Only the chips with external RAM take it. Firmware cannot choose — see [PSRAM Size](#psram-size). |
 | `--strap-mode <HEX>` | — | GPIO_STRAP value at reset. `0x02` = UART download mode (jumps to ROM entry instead of firmware entry; remapped per chip, so pass `0x02` on every target); `0x04` = USB-Serial-JTAG download; `0x08` = SPI flash boot (default). Mirrors QEMU's `-global driver=esp32cN.gpio,property=strap_mode,value=…`. |
 | `--control-tcp <HOST:PORT>` | — | Host control channel: newline-delimited `reset`, `reset --soft`, `erase-flash`, `erase-region OFF LEN`, `write-region OFF FILE`, `ping`. Acts on the running machine, so one process and one output stream survive a reset — see [Host Control Channel](#host-control-channel). |
 | `--gdb <PORT>` | — | Serve a GDB remote stub on this port (QEMU's `-s` is 1234). `riscv32-esp-elf-gdb` / `xtensa-esp32s3-elf-gdb` connect with `target remote :PORT`. |
@@ -220,7 +224,7 @@ Two limits are the silicon's, and the emulator reproduces both:
 ### PSRAM Size
 
 The emulated PSRAM die reports **16 MB** by default on ESP32-P4 and ESP32-S31,
-and 32 MB on ESP32-C5 and ESP32-S3. `--psram-size` changes it:
+and 8 MB on ESP32-C5 and ESP32-S3. `--psram-size` changes it:
 
 ```sh
 esp-emu --chip esp32p4 --firmware app.bin --psram-size 32M
@@ -280,15 +284,36 @@ written; the default is seeded only when all of them read zero.
 
 ## WiFi Emulation
 
-The emulator includes a built-in WiFi soft access point with WPA2-PSK support. Firmware that connects to WiFi will:
+The emulator includes a built-in WiFi soft access point with WPA2-PSK and WPA3-Personal (SAE) support. Firmware that connects to WiFi will:
 
 1. **Scan** — The AP sends beacons and probe responses with the configured SSID
-2. **Authenticate** — Open System authentication
+2. **Authenticate** — Open System, or SAE for WPA3
 3. **Associate** — AP assigns AID=1
-4. **WPA2 handshake** — Full 4-way EAPOL handshake (when password is set)
+4. **4-way handshake** — Full EAPOL handshake with the PSK or SAE key (when password is set)
 5. **DHCP** — Built-in DHCP server assigns 192.168.4.2 (gateway 192.168.4.1)
 
 This works automatically — ESP-IDF WiFi station firmware will connect and receive an IP address. Use `--wifi-ssid` and `--wifi-password` to match your firmware's WiFi configuration. Default: SSID `myssid`, password `mypassword`.
+
+With a password set, the AP runs WPA2/WPA3 transition mode, so there is nothing to configure per firmware: a WPA2 station uses WPA2-PSK, a WPA3 station uses SAE, and firmware that requires WPA3 with protected management frames connects as it would to a real WPA3 network. Reconnects reuse the cached SAE result.
+
+**Enterprise (802.1X)**: `--wifi-auth wpa3-enterprise --wifi-radius 127.0.0.1:1812,testing123` makes the AP authenticate stations against a RADIUS server, so EAP-TLS, PEAP and TTLS work with whatever the server supports. hostapd's built-in EAP server is enough, using the certificates from ESP-IDF's `examples/wifi/wifi_enterprise`:
+
+```
+# hostapd.conf
+driver=none
+interface=lo
+eap_server=1
+radius_server_clients=clients          # "127.0.0.1 testing123"
+radius_server_auth_port=1812
+eap_user_file=eap_users                # "* PEAP,TTLS,TLS" and "\"espressif\" MSCHAPV2,TTLS-MSCHAPV2 \"test11\" [2]"
+ca_cert=ca.pem
+server_cert=server.crt
+private_key=server.key
+```
+
+Run `hostapd hostapd.conf &`, then the example with `--wifi-ssid ESP_ENTERPRISE_AP` and the two flags above. `wpa2-enterprise` advertises 802.1X without PMF; `wpa3-enterprise` requires PMF. WPA3-Enterprise 192-bit (Suite-B) is not supported.
+
+To test a firmware's security policy rather than its connection, pin the AP: `--wifi-auth wpa3-sae` is a WPA3-only network that refuses WPA2 stations, `--wifi-auth wpa2-psk` is a WPA2-only AP that WPA3-only firmware must reject, and `--wifi-sae-pwe hunt-and-peck` makes firmware that insists on hash-to-element fail as it would on an older AP.
 
 For real network connectivity, run with either [User-mode Networking](#user-mode-networking-no-host-setup) (zero setup, the default when `--net` is omitted and no `tap0` is available) or [TAP Networking](#tap-networking) (bridged to host interface; picked automatically on Linux when `tap0` is set up).
 
@@ -324,7 +349,7 @@ esp-emu \
   --net user
 ```
 
-Build firmware with `idf.py set-target esp32p4 && idf.py build`. The emulator targets ROM rev 0; set `CONFIG_ESP32P4_REV_MIN_0=y` and `CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y` to match.
+Build firmware with `idf.py set-target esp32p4 && idf.py build`. The emulator models ESP32-P4 v3.x silicon. For firmware built for an earlier revision, run it with an eFuse file stating that revision (see [Chip Revision (eFuse)](#chip-revision-efuse)).
 
 CPU1 is brought up dynamically once the firmware releases its reset (`LP_AON_CLKRST_HPCPU_RESET_CTRL0`); single-core firmware (`CONFIG_FREERTOS_UNICORE=y`) runs on hart 0 only with no dual-core overhead. PSRAM is backed as zero-init RAM; PTP, jumbo Ethernet frames, and the LP core are not modelled.
 
@@ -670,7 +695,7 @@ Binary tarballs (single-file artifacts containing only the `esp-emu` executable)
 - `esp-emu-<version>-wasm.tar.gz` — browser WebAssembly bundle
 - `SHA256SUMS` — sha256 for each tarball; verified automatically by `install.sh`
 
-Per-version release notes live in [`CHANGELOG.md`](CHANGELOG.md); each section is also the body of the matching GitHub release.
+Per-version release notes are the body of each [GitHub release](https://github.com/espressif/esp-emulator/releases).
 
 ## Docs
 

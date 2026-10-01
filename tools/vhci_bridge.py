@@ -213,6 +213,10 @@ async def main():
     # addresses, no RPA) keeps the kernel on the legacy path Bumble emits. Works
     # on old and new BlueZ/kernels; remove once google/bumble#841 is fixed.
     bluez_controller.le_features &= ~hci.LeFeatureMask.LL_PRIVACY
+    # Keep BlueZ on legacy scanning so the synthesised SCAN_RSP report is a
+    # legacy report the kernel merges into the device name (Bumble >= 0.0.230
+    # advertises extended advertising by default).
+    bluez_controller.le_features &= ~hci.LeFeatureMask.LE_EXTENDED_ADVERTISING
     if hci_index is not None:
         print(f"[+] VHCI adapter registered as hci{hci_index}")
         print(f"    Use: chip-tool pairing ble-wifi ... --ble-controller {hci_index}")
