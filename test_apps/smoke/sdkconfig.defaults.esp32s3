@@ -1,0 +1,5 @@
+# Enable BLE (NimBLE host) so the smoke test_app can exercise advertising.
+# The emulator models the S3 BLE controller via the C3-style VHCI path with
+# an Xtensa callback trampoline (see src/periph/ble_hci.rs).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y

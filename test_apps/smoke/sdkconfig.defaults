@@ -1,0 +1,6 @@
+# Common defaults for the esp-emu smoke test_app.
+# Target-specific overrides live in sdkconfig.defaults.<target> (BLE on C3/C6/H2/S31).
+
+# The NimBLE host pushes the app past the default 1 MB factory
+# partition, so use the larger single-app layout for every target.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

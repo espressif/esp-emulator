@@ -1,0 +1,9 @@
+# Large single-app layout (WiFi/Ethernet + http client push past 1 MB).
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# Bigger TCP windows / buffers so the download isn't window-starved — this is a
+# throughput benchmark, so give lwip room to keep the pipe full.
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64

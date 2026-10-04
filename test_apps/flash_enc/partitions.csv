@@ -1,0 +1,8 @@
+# Name,     Type, SubType, Offset, Size,   Flags
+# `enc_test` carries the `encrypted` flag so esp_partition_write goes through
+# the XTS engine. A plain data partition (like nvs below) is deliberately NOT
+# encrypted by IDF, so writing there would prove nothing.
+nvs,        data, nvs,     ,       0x6000,
+phy_init,   data, phy,     ,       0x1000,
+enc_test,   data, 0x40,    ,       0x4000, encrypted
+factory,    app,  factory, ,       1M,

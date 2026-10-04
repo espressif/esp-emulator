@@ -1,0 +1,5 @@
+# esp-emu WPA3 station test_app. SAE, H2E and PMF are IDF defaults; pinned
+# here so a future default flip cannot silently turn the suite into WPA2.
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
+CONFIG_ESP_WIFI_ENABLE_SAE_H2E=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

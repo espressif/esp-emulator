@@ -1,0 +1,6 @@
+# A 32 MiB device. ESP-IDF turns on CONFIG_BOOTLOADER_FLASH_32BIT_ADDR for
+# every flash size of 32 MB and up, which switches the whole spi_flash driver
+# onto the 4-byte-address opcode set (CMD_*_4B) — 24 bits stop at 16 MiB.
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

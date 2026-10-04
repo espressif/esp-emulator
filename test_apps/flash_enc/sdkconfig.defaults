@@ -1,0 +1,19 @@
+# Flash encryption in development mode: the bootloader generates the key, burns
+# it to eFuse on first boot, and encrypts the partitions in place. That first
+# boot is the interesting part for the emulator — it exercises the XTS-AES
+# peripheral, the eFuse write path and the flash-cache decryption path
+# together, which nothing else does.
+#
+# Development (not release) mode on purpose: it keeps UART download working, so
+# a failed run can still be inspected, and it does not permanently lock a
+# simulated part out of reflashing.
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# The flash-encryption bootloader is bigger than the default layout allows
+# (~0x8030 on C3, ~0x8170 on C5), and the space it gets is
+# `table_offset - bootloader_offset` — which differs per chip, since C5/P4/S31
+# start the bootloader at 0x2000 rather than 0x0. 0xd000 clears both cases.
+CONFIG_PARTITION_TABLE_OFFSET=0xd000
+CONFIG_NVS_ENCRYPTION=n

@@ -1,0 +1,14 @@
+# External RAM on, with the board's size left to the device — which is the
+# point of the suite: `esp_psram` has no size option on P4/S31, it reads the
+# die's mode registers, so the emulator's `--psram-size` is the only thing
+# that decides (GH #9).
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_USE_MALLOC=y
+# The app has to reach `app_main` and report even when no die is fitted, so it
+# can cover the `--psram-size 0` case instead of aborting on it.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+# The driver's own memtest walks the whole device; at 32 MB that is minutes of
+# wall clock under the emulator for a weaker assertion than the app's own
+# end-to-end write/read at both ends of the detected region.
+CONFIG_SPIRAM_MEMTEST=n

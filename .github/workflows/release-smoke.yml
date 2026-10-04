@@ -1,0 +1,50 @@
+# Runs on every published release: installs that release's esp-emu, builds
+# test_apps/smoke against the ESP-IDF master docker image and runs it per chip.
+# Source of truth is the esp-emulator source repo (mirror/.github/workflows);
+# scripts/publish-release.sh copies it here together with test_apps/.
+name: Release smoke test
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "esp-emu version to test (X.Y.Z); empty = latest release"
+        required: false
+        default: ""
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [esp32c3, esp32c5, esp32c6, esp32h2, esp32p4, esp32s3, esp32s31]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install esp-emu
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          version="${TAG:-$REQUESTED}"; version="${version#v}"
+          ./install.sh --bin-dir "$HOME/.local/bin" ${version:+--version "$version"}
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/esp-emu" --version
+
+      - name: Pull ESP-IDF master image
+        run: docker pull espressif/idf:latest
+
+      - name: Build and run the smoke app
+        run: test_apps/run_smoke.sh --chips ${{ matrix.chip }} --out out
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.chip }}
+          path: |
+            out/**/emu.log
+            out/**/build.log
+          if-no-files-found: ignore

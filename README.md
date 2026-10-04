@@ -36,6 +36,20 @@ esp-emu --version        # print currently installed version
 
 `esp-emu update` re-runs the installer against the directory holding the running binary, so it updates wherever you first installed it.
 
+## Tests
+
+`test_apps/` holds the ESP-IDF projects the emulator is tested against.
+`test_apps/run_smoke.sh` builds the smoke app for every chip (docker
+`espressif/idf:latest` by default, or a sourced `IDF_PATH`) and runs it in
+the `esp-emu` on your `PATH`; it passes when the app's `RESULT_SUMMARY:`
+reports no failures. The same script runs on every published release against
+ESP-IDF master (`.github/workflows/release-smoke.yml`).
+
+```bash
+./install.sh
+test_apps/run_smoke.sh --chips esp32c3,esp32c6
+```
+
 ## Features
 
 - **CPU**: Full RV32IMAC on C3/C5/C6/H2; RV32IMAFC (with single-precision FP via Berkeley SoftFloat) on P4; Xtensa LX7 (dual-core, windowed registers, zero-overhead loops, FPU) on S3. Multi-hart scheduler supports P4's dual HP cores. RV32 PMP and Espressif PMA enforced via a fused two-level page table — catches the same access violations as silicon (IDF panic memprot tests, TEE REE-vs-TEE isolation, IRAM/IROM write protection). P4 also runs the PIE SIMD instructions that ESP-SR, esp-dl and esp-nn use.
