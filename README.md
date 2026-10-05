@@ -24,6 +24,10 @@ Other options: `--check` (print latest, no install), `--bin-dir DIR`, `--force`,
 curl -fsSL https://raw.githubusercontent.com/espressif/esp-emulator/main/install.sh | sh -s -- --help
 ```
 
+## Try it in your browser
+
+The browser build is published to GitHub Pages on every release: **<https://espressif.github.io/esp-emulator/>**. Pick a chip, drop a merged flash image (`.bin`) on the page and press Run. The emulator runs entirely in your tab, the firmware never leaves your machine, and a live dashboard shows the console, instruction rate, cores, GPIO pads, registers and memory. Networking is not available from the hosted page (it needs a proxy on your machine, see [`BROWSER.md`](docs/guides/BROWSER.md)); use the native binary for that.
+
 ## Updating
 
 After install:
@@ -715,7 +719,7 @@ Per-version release notes are the body of each [GitHub release](https://github.c
 
 User guides live at [`docs/guides/`](docs/guides/) and track the latest release:
 
-- [`BROWSER.md`](docs/guides/BROWSER.md) — running the WASM build in a browser
+- [`BROWSER.md`](docs/guides/BROWSER.md) — running the WASM build in a browser (hosted at <https://espressif.github.io/esp-emulator/>)
 - [`MATTER.md`](docs/guides/MATTER.md) — Matter / Thread testing
 - [`HOSTED.md`](docs/guides/HOSTED.md) — ESP-Hosted P4↔C6 setup
 - [`THREAD.md`](docs/guides/THREAD.md) — 802.15.4 / OpenThread

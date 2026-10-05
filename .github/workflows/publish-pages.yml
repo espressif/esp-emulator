@@ -1,0 +1,91 @@
+# Publishes the browser build to GitHub Pages on every published release:
+# downloads that release's wasm tarball (the one the GitLab tag pipeline
+# built and checksummed), verifies it against SHA256SUMS and deploys its
+# www/ folder as the site. The page runs the emulator entirely in the
+# visitor's browser; Pages only serves the files.
+#
+# Source of truth is the mirror itself (.github/ is not synced from the
+# esp-emulator source repo). Re-run by hand with a version to redeploy an
+# older release or to publish the first page before the next release.
+name: Publish browser build to Pages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "esp-emu version to deploy (X.Y.Z); empty = latest release"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; a newer release wins over an in-flight older one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Resolve the release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "release" ]; then
+            tag="${{ github.event.release.tag_name }}"
+          elif [ -n "$INPUT_VERSION" ]; then
+            tag="v${INPUT_VERSION#v}"
+          else
+            tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "Deploying $tag"
+
+      - name: Download and verify the wasm bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dl && cd dl
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            -p "esp-emu-${VERSION}-wasm.tar.gz" -p SHA256SUMS
+          sha256sum -c --ignore-missing SHA256SUMS
+          tar xzf "esp-emu-${VERSION}-wasm.tar.gz"
+          test -f "esp-emu-${VERSION}-wasm/www/index.html"
+          test -f "esp-emu-${VERSION}-wasm/www/pkg/esp_emu_bg.wasm"
+          mkdir -p ../_site
+          cp -r "esp-emu-${VERSION}-wasm/www/." ../_site/
+          # The dev server and the pkg's npm metadata have no business on the site.
+          rm -f ../_site/serve.py ../_site/pkg/.gitignore ../_site/pkg/package.json \
+                ../_site/pkg/README.md
+          echo "$VERSION" > ../_site/VERSION
+          du -sh ../_site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
