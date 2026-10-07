@@ -58,6 +58,10 @@
 #if SOC_I2C_SUPPORTED
 #include "driver/i2c_master.h"
 #endif
+#if SOC_GPSPI_SUPPORTED
+#include "driver/spi_master.h"
+#include "soc/spi_pins.h"
+#endif
 
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -107,6 +111,9 @@ bool test_mmap(void);
 /* --- test_periph.c --- */
 bool test_printf(void);
 bool test_gpio(void);
+#if SOC_GPSPI_SUPPORTED
+bool test_spi_iomux(void);
+#endif
 #if SOC_PCNT_SUPPORTED
 bool test_pcnt(void);
 #endif

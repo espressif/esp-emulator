@@ -4,3 +4,5 @@
 # The NimBLE host pushes the app past the default 1 MB factory
 # partition, so use the larger single-app layout for every target.
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y

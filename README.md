@@ -61,7 +61,7 @@ test_apps/run_smoke.sh --chips esp32c3,esp32c6
 - **WiFi**: Soft AP with WPA2-PSK, WPA3-SAE (PMF, H2E, transition mode) and WPA2/WPA3-Enterprise (802.1X relayed to a RADIUS server), 802.11 management frames, DHCP server, and TAP networking for real connectivity
 - **Ethernet**: OpenCores Ethernet MAC (OpenETH) for QEMU-compatible `CONFIG_ETH_USE_OPENETH` firmware, plus Synopsys DesignWare GMAC for ESP32-P4's built-in EMAC
 - **Networking backends**: user-mode (zero-setup, QEMU-style NAT via smoltcp — DHCP, DNS forwarder, mDNS relay with optional record-rewriting NAT for Matter/HomeKit-style service discovery, IPv6 SLAAC, `hostfwd`, restrict mode, ICMP echo), TAP bridge (Linux), vmnet (macOS)
-- **BLE**: NimBLE host stack support with HCI forwarding to Bumble (virtual controller) or physical Linux HCI adapters
+- **BLE**: NimBLE host stack on every BLE chip, plus Bluedroid on ESP32-S31, with HCI forwarding to Bumble (virtual controller) or physical Linux HCI adapters
 - **Thread / 802.15.4**: OpenThread `ot_cli` and `ot_br` on ESP32-C6 and ESP32-H2. Single-node forms a partition out of the box; two emulator instances form one Thread mesh (Leader + Child, or Border Router + end device) over a localhost UDP bridge
 - **Crypto**: AES (ECB/CBC/OFB/CTR/CFB), SHA (1/224/256), RSA, ECC, HMAC-SHA256, Digital Signature, XTS-AES flash encryption, ECDSA (P-256/P-384 on P4 and C5; P-256 on H2), Key Manager + HUK Generator (P4, C5) — drives flash / HMAC / DS / ECDSA key sourcing for `CONFIG_SECURE_FLASH_ENCRYPTION_KEY_SOURCE_KEY_MGR`
 - **Peripherals**: UART, USB Serial JTAG, GPIO, system timer, timer groups, interrupt controllers (PLIC for C3/C6/H2, CLIC for C5/P4), eFuse, SPI flash, GDMA, GP-SPI, RMT, LEDC, PCNT, MCPWM, I2C (with a built-in EEPROM slave), and the TIMG/RTC watchdogs
@@ -97,6 +97,7 @@ esp-emu --chip esp32c3 --firmware build/merged-binary.bin
 | `--firmware <PATH>` | (required) | Path to merged flash binary |
 | `--rom <PATH>` | embedded | Path to ROM ELF file (overrides the built-in default for `--chip`) |
 | `--elf <PATH>` | — | Path to application ELF for BLE symbol lookup (e.g. `build/project.elf`) |
+| `--no-panic-intercept` | off | With `--elf`, don't stop at the first firmware panic: the firmware's own panic handler runs and reboots or halts per its sdkconfig. For firmware that panics on purpose (task-watchdog reset tests, deliberate `abort()`); backtraces and BLE interception stay. |
 | `--efuse <PATH>` | — | Path to eFuse binary (336 bytes, QEMU-compatible). State is always saved back on exit (eFuses are one-time-programmable). |
 | `--timeout <DURATION>` | — | Exit after duration (e.g. `5s`, `500ms`) |
 | `--exit-on <STRING>` | — | Exit with code 0 when UART output contains this string |
@@ -417,6 +418,29 @@ Format: `hostfwd=PROTO:[HOST_ADDR]:HOST_PORT-:GUEST_PORT`. An empty host addr
 (`tcp::10080-:80`) binds `0.0.0.0` (any interface) — match QEMU. Use
 `tcp:127.0.0.1:10080-:80` to restrict to localhost.
 
+### Firmware running its own soft AP
+
+When the firmware starts a soft AP instead of connecting as a station, the
+emulator joins it as a station, leases an address from the firmware's DHCP
+server, and `hostfwd` TCP rules reach the firmware through that link. Open and
+WPA2-PSK APs are supported; the SSID comes from the firmware's beacon, and the
+password from `--wifi-fw-ap-password` (default: `--wifi-password`):
+
+```sh
+esp-emu --chip esp32s31 --firmware captive_portal.bin --wifi-fw-ap-password esp32_pwd \
+  --net "user,hostfwd=tcp::18080-:80"
+curl http://127.0.0.1:18080/
+```
+
+Verified with IDF's `captive_portal` example on ESP32-C3, C5, C6, S3 and S31.
+An APSTA firmware gets both paths at once: its station on the emulator's AP
+as usual, and the emulator on its AP. A new `hostfwd` connection goes through
+the firmware's AP while that path is up and through its station otherwise, so
+softAP provisioning with `esp_prov --transport softap --service_name
+127.0.0.1:18080` works end to end. UDP `hostfwd` rules only reach the firmware
+through its station. WPA3-SAE-only and hidden-SSID APs are not supported, and a
+wrong password stops the station after three failed handshakes.
+
 ### mDNS NAT (Matter, HomeKit, etc.)
 
 Zero-setup Matter commissioning and control — no TAP needed. Adds on top of the
@@ -495,7 +519,7 @@ sudo esp-emu \
 
 ## BLE Emulation
 
-BLE firmware (NimBLE host stack) runs natively in the emulator. HCI commands are either handled by a built-in virtual controller or forwarded to an external backend via `--ble-hci`. Requires `--elf` to provide firmware symbols for HCI interception.
+BLE firmware runs natively in the emulator: the NimBLE host stack on every BLE chip, and Bluedroid on ESP32-S31 (its BTDM controller's standard VHCI driver is intercepted the same way). HCI commands are either handled by a built-in virtual controller or forwarded to an external backend via `--ble-hci`. Requires `--elf` to provide firmware symbols for HCI interception.
 
 ### Bumble (software-only, no hardware needed)
 
@@ -731,6 +755,7 @@ Companion scripts live at [`tools/`](tools/):
 
 - `setup-tap.sh` — create the `tap0` device for TAP networking on Linux
 - `bumble_test.py` — virtual BLE controller (Google Bumble) over TCP for HCI testing
+- `bumble_classic_peer.py` — virtual controller plus a Classic BT peer that drives ESP32-S31 Bluedroid examples (A2DP sink, SPP, L2CAP, HID, HFP) over BR/EDR
 - `ws-net-proxy.py` — WebSocket↔raw-Ethernet bridge for the browser build
 - `vhci_bridge.py` — Linux VHCI HCI bridge
 - `make-efuse.py` — build an `--efuse` image that reports a given chip revision (`--chip esp32c3 --chip-rev 1.1`)

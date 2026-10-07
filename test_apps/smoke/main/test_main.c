@@ -64,6 +64,9 @@ void app_main(void)
     RUN_TEST("system_info",            test_system_info);
     RUN_TEST("printf",                 test_printf);
     RUN_TEST("gpio",                   test_gpio);
+#if SOC_GPSPI_SUPPORTED
+    RUN_TEST("spi_iomux",              test_spi_iomux);
+#endif
     RUN_TEST("partition_table",        test_partition_table);
     RUN_TEST("spi_flash",              test_spi_flash);
     RUN_TEST("mmap",                   test_mmap);

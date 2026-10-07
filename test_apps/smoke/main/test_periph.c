@@ -439,3 +439,60 @@ fail:
     return false;
 }
 #endif /* SOC_I2C_SUPPORTED */
+
+/* --------------- SPI master on the IO MUX fast path --------------- */
+
+#if SOC_GPSPI_SUPPORTED
+/* Initialise SPI2 on the chip's default SPI pinout. Those pins are the ones
+ * spi_periph_signal[].*_iomux_pin names, so the driver skips the GPIO matrix
+ * and programs the pads' MCU_SEL instead. The emulator has to resolve a pad
+ * through the IO MUX to see this bus at all -- tests/io_mux_firmware.rs reads
+ * the pads back after this case runs, which is why the bus is left up. */
+bool test_spi_iomux(void)
+{
+    const char *TN = "spi_iomux";
+
+    spi_bus_config_t cfg = {
+        .sclk_io_num = SPI2_IOMUX_PIN_NUM_CLK,
+        .mosi_io_num = SPI2_IOMUX_PIN_NUM_MOSI,
+        .miso_io_num = SPI2_IOMUX_PIN_NUM_MISO,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 32,
+    };
+    esp_err_t err = spi_bus_initialize(SPI2_HOST, &cfg, SPI_DMA_DISABLED);
+    if (err != ESP_OK) {
+        FAIL_MSG(TN, "spi_bus_initialize: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    spi_device_interface_config_t dev_cfg = {
+        .clock_speed_hz = 1000000,
+        .mode = 0,
+        .spics_io_num = SPI2_IOMUX_PIN_NUM_CS,
+        .queue_size = 1,
+    };
+    spi_device_handle_t dev = NULL;
+    err = spi_bus_add_device(SPI2_HOST, &dev_cfg, &dev);
+    if (err != ESP_OK) {
+        FAIL_MSG(TN, "spi_bus_add_device: %s", esp_err_to_name(err));
+        spi_bus_free(SPI2_HOST);
+        return false;
+    }
+
+    uint8_t tx[2] = { 0xA5, 0x5A };
+    spi_transaction_t t = { .length = 8 * sizeof(tx), .tx_buffer = tx };
+    err = spi_device_polling_transmit(dev, &t);
+    if (err != ESP_OK) {
+        FAIL_MSG(TN, "spi_device_polling_transmit: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    /* Deliberately not freed: the pad configuration is the artefact under
+     * test. Report the pinout so a failure is readable without the emulator. */
+    ESP_LOGI(TAG, "  SPI2 IO MUX pinout: clk=%d mosi=%d miso=%d cs=%d",
+             SPI2_IOMUX_PIN_NUM_CLK, SPI2_IOMUX_PIN_NUM_MOSI,
+             SPI2_IOMUX_PIN_NUM_MISO, SPI2_IOMUX_PIN_NUM_CS);
+    return true;
+}
+#endif /* SOC_GPSPI_SUPPORTED */
