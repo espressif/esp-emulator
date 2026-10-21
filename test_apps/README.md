@@ -16,9 +16,14 @@ chain — mask ROM → 2nd-stage bootloader → app — on every supported chip.
 ## Running the smoke app
 
 `run_smoke.sh` builds `smoke/` per chip and runs it in the `esp-emu` on your
-`PATH`. It passes when the app's final `RESULT_SUMMARY:` line reports no
-failures. Builds use the `espressif/idf:latest` docker image by default; pass
-`--idf-path` to use a sourced ESP-IDF checkout instead.
+`PATH`. It passes when at least one chip actually ran and every run's final
+`RESULT_SUMMARY:` line reports no failures. Builds use the
+`espressif/idf:latest` docker image by default; pass `--idf-path` to use a
+sourced ESP-IDF checkout instead.
+
+An unknown `--chips` name is rejected as a usage error (exit 2). A chip the
+chosen IDF cannot target is reported as `SKIP`; when every requested chip is
+skipped, the script fails (exit 1), so a typo cannot look like a pass.
 
 ```sh
 ./install.sh                                   # esp-emu 0.46 or newer

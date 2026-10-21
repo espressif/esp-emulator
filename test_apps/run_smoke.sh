@@ -16,6 +16,10 @@
 # given), every chip this IDF and esp-emu both know, 240 s per chip, ./out.
 # A requested chip the IDF cannot build for is reported as SKIP, not FAIL.
 #
+# Exits 0 only when at least one chip actually ran and every run passed.
+# An unknown --chips name is a usage error (exit 2). When every requested chip
+# is skipped the script fails (exit 1), so a typo cannot look like a pass.
+#
 # Needs: esp-emu >= 0.46 (--no-panic-intercept: the app's watchdog phase
 # panics on purpose and must reboot), docker or a sourced ESP-IDF, rsync.
 
@@ -35,15 +39,39 @@ OUT="$PWD/out"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --esp-emu)    EMU="$2"; shift 2 ;;
-        --chips)      CHIPS="${2//,/ }"; shift 2 ;;
+        --chips)
+            CHIPS="${2:?--chips needs an argument}"
+            CHIPS="${CHIPS//,/ }"
+            if [[ -z "${CHIPS// /}" ]]; then
+                echo "error: --chips needs a non-empty chip list" >&2
+                exit 2
+            fi
+            shift 2 ;;
         --idf-docker) IMAGE="$2"; IDF_DIR=""; shift 2 ;;
         --idf-path)   IDF_DIR="$2"; IMAGE=""; shift 2 ;;
         --timeout)    TIMEOUT="$2"; shift 2 ;;
         --out)        OUT="$2"; shift 2 ;;
-        -h|--help)    sed -n '2,20p' "$0"; exit 0 ;;
+        -h|--help)    sed -n '2,24p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+# Reject unknown chip names before touching docker, the IDF tree or the
+# emulator. A typo used to reach the SKIP path and exit 0.
+if [[ -n "$CHIPS" ]]; then
+    for chip in $CHIPS; do
+        known=false
+        for c in "${ALL_CHIPS[@]}"; do
+            if [[ "$chip" == "$c" ]]; then known=true; break; fi
+        done
+        if [[ "$known" != true ]]; then
+            echo "error: unknown chip '$chip'" >&2
+            echo "valid chips: ${ALL_CHIPS[*]}" >&2
+            exit 2
+        fi
+    done
+fi
+
 [[ -n "$IMAGE" || -n "$IDF_DIR" ]] || IMAGE="espressif/idf:latest"
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 
@@ -68,11 +96,17 @@ SUPPORTED=" $(idf 'idf.py --preview --list-targets' 2>/dev/null | tr '\n' ' ') "
 [[ -n "$CHIPS" ]] || CHIPS="${ALL_CHIPS[*]}"
 
 declare -A RESULT
-failed=0
+ran=0
+passed=0
+skipped=0
+fail_count=0
 for chip in $CHIPS; do
     if [[ "$SUPPORTED" != *" $chip "* ]]; then
-        RESULT[$chip]="SKIP (not a target of this IDF)"; continue
+        RESULT[$chip]="SKIP (not a target of this IDF)"
+        skipped=$((skipped + 1))
+        continue
     fi
+    ran=$((ran + 1))
     dir="$OUT/smoke-$chip"
     rsync -a --delete --exclude=build/ --exclude=sdkconfig --exclude=sdkconfig.old \
         --exclude=managed_components/ --exclude=dependencies.lock "$APP/" "$dir/"
@@ -80,7 +114,7 @@ for chip in $CHIPS; do
     if ! idf "idf.py -C '$dir' --preview set-target $chip >'$dir/build.log' 2>&1 && \
               idf.py -C '$dir' build >>'$dir/build.log' 2>&1 && \
               idf.py -C '$dir' merge-bin -o '$dir/build/merged.bin' >>'$dir/build.log' 2>&1"; then
-        RESULT[$chip]="FAIL (build; see $dir/build.log)"; failed=1
+        RESULT[$chip]="FAIL (build; see $dir/build.log)"; fail_count=$((fail_count + 1))
         tail -20 "$dir/build.log"; continue
     fi
     echo "=== $chip: running"
@@ -90,8 +124,10 @@ for chip in $CHIPS; do
     summary="$(grep -o 'RESULT_SUMMARY: .*' "$dir/emu.log" | tail -1)"
     if [[ "$summary" == *"failed=0"* ]]; then
         RESULT[$chip]="PASS ($summary)"
+        passed=$((passed + 1))
     else
-        RESULT[$chip]="FAIL (${summary:-no RESULT_SUMMARY within ${TIMEOUT}s}; see $dir/emu.log)"; failed=1
+        RESULT[$chip]="FAIL (${summary:-no RESULT_SUMMARY within ${TIMEOUT}s}; see $dir/emu.log)"
+        fail_count=$((fail_count + 1))
         grep -E "FAIL|Firmware abort|Guru|Timeout reached" "$dir/emu.log" | tail -10
     fi
 done
@@ -99,4 +135,13 @@ done
 echo
 echo "smoke results:"
 for chip in $CHIPS; do printf '  %-9s %s\n' "$chip" "${RESULT[$chip]}"; done
-exit $failed
+echo
+echo "summary: ran=$ran passed=$passed failed=$fail_count skipped=$skipped"
+if (( ran == 0 )); then
+    echo "error: no chip was actually tested; every requested chip was skipped" >&2
+    exit 1
+fi
+if (( fail_count > 0 )); then
+    exit 1
+fi
+exit 0
