@@ -62,6 +62,7 @@ done
 # Reject unknown chip names before touching docker, the IDF tree or the
 # emulator. A typo used to reach the SKIP path and exit 0.
 if [[ -n "$CHIPS" ]]; then
+    set -f
     for chip in $CHIPS; do
         known=false
         for c in "${ALL_CHIPS[@]}"; do
