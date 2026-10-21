@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
                 exit 2
             fi
             CHIPS="${2//,/ }"
-            if [[ -z "${CHIPS// /}" ]]; then
+            if [[ -z "${CHIPS//[[:space:]]/}" ]]; then
                 echo "error: --chips needs a non-empty chip list" >&2
                 exit 2
             fi
