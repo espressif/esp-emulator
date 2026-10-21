@@ -116,7 +116,7 @@ if [[ -n "$IMAGE" ]]; then
         echo "error: docker not found; pass --idf-path DIR to use a local ESP-IDF" >&2
         exit 2
     }
-    docker info >/dev/null 2>&1 || {
+    docker info >/dev/null || {
         echo "error: cannot talk to the docker daemon (not running, or no permission)" >&2
         echo "       start docker, fix permissions, or pass --idf-path DIR" >&2
         exit 2
