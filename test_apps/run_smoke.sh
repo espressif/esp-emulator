@@ -87,7 +87,7 @@ idf() {
         docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
             -v "$OUT:$OUT" -w "$OUT" "$IMAGE" bash -c "$1"
     else
-        bash -c "source '$IDF_DIR/export.sh' >/dev/null 2>&1 && $1"
+        bash -c "source '$IDF_DIR/export.sh' >/dev/null && $1"
     fi
 }
 
