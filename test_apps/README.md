@@ -25,6 +25,10 @@ An unknown `--chips` name is rejected as a usage error (exit 2). A chip the
 chosen IDF cannot target is reported as `SKIP`; when every requested chip is
 skipped, the script fails (exit 1), so a typo cannot look like a pass.
 
+If the IDF backend cannot be reached, the script prints the cause and exits 2.
+This covers docker missing, the docker daemon not running or not permitted,
+and an `--idf-path` directory without `export.sh`.
+
 ```sh
 ./install.sh                                   # esp-emu 0.46 or newer
 test_apps/run_smoke.sh                         # every chip this IDF can build

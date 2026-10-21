@@ -15,6 +15,7 @@
 # ($ESP_EMU_IDF_DOCKER; $IDF_PATH is used instead when set and no image is
 # given), every chip this IDF and esp-emu both know, 240 s per chip, ./out.
 # A requested chip the IDF cannot build for is reported as SKIP, not FAIL.
+# An unreachable IDF backend (docker or --idf-path) is a usage error (exit 2).
 #
 # Exits 0 only when at least one chip actually ran and every run passed.
 # An unknown --chips name is a usage error (exit 2). When every requested chip
@@ -54,7 +55,7 @@ while [[ $# -gt 0 ]]; do
         --idf-path)   IDF_DIR="$2"; IMAGE=""; shift 2 ;;
         --timeout)    TIMEOUT="$2"; shift 2 ;;
         --out)        OUT="$2"; shift 2 ;;
-        -h|--help)    sed -n '2,24p' "$0"; exit 0 ;;
+        -h|--help)    sed -n '2,25p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -91,12 +92,60 @@ idf() {
 }
 
 command -v "$EMU" >/dev/null || { echo "esp-emu not found: $EMU" >&2; exit 2; }
-"$EMU" --help 2>/dev/null | grep -q -- '--no-panic-intercept' \
-    || { echo "$EMU is too old: needs --no-panic-intercept (esp-emu >= 0.46)" >&2; exit 2; }
+if ! emu_help="$("$EMU" --help 2>&1)"; then
+    echo "error: cannot run '$EMU --help'" >&2
+    printf '%s\n' "$emu_help" | tail -5 >&2
+    exit 2
+fi
+if ! grep -q -- '--no-panic-intercept' <<< "$emu_help"; then
+    echo "$EMU is too old: needs --no-panic-intercept (esp-emu >= 0.46)" >&2
+    exit 2
+fi
+if ! emu_version="$("$EMU" --version 2>&1)"; then
+    echo "error: '$EMU --version' failed" >&2
+    printf '%s\n' "$emu_version" | tail -5 >&2
+    exit 2
+fi
+echo "esp-emu: $(printf '%s\n' "$emu_version" | sed -n '1p')"
 
-echo "esp-emu: $("$EMU" --version 2>/dev/null | head -1)"
-echo "IDF:     $(idf 'idf.py --version' 2>/dev/null | tail -1)"
-SUPPORTED=" $(idf 'idf.py --preview --list-targets' 2>/dev/null | tr '\n' ' ') "
+# Fail here, with a message, if the IDF backend cannot be reached. Without
+# these checks `set -e` plus pipefail killed the script inside the command
+# substitution below, before any diagnostic was printed.
+if [[ -n "$IMAGE" ]]; then
+    command -v docker >/dev/null 2>&1 || {
+        echo "error: docker not found; pass --idf-path DIR to use a local ESP-IDF" >&2
+        exit 2
+    }
+    docker info >/dev/null 2>&1 || {
+        echo "error: cannot talk to the docker daemon (not running, or no permission)" >&2
+        echo "       start docker, fix permissions, or pass --idf-path DIR" >&2
+        exit 2
+    }
+    IDF_BACKEND="docker image $IMAGE"
+else
+    if [[ ! -f "$IDF_DIR/export.sh" ]]; then
+        echo "error: no export.sh in '$IDF_DIR'; pass --idf-path DIR or --idf-docker IMAGE" >&2
+        exit 2
+    fi
+    IDF_BACKEND="ESP-IDF at $IDF_DIR"
+fi
+
+if ! idf_version="$(idf 'idf.py --version')"; then
+    echo "error: 'idf.py --version' failed via $IDF_BACKEND" >&2
+    echo "       check the backend and try again" >&2
+    exit 2
+fi
+echo "IDF:     $(printf '%s\n' "$idf_version" | tail -1)"
+
+if ! targets="$(idf 'idf.py --preview --list-targets')"; then
+    echo "error: 'idf.py --preview --list-targets' failed via $IDF_BACKEND" >&2
+    exit 2
+fi
+SUPPORTED=" $(printf '%s\n' "$targets" | tr '\n' ' ') "
+if [[ -z "${SUPPORTED// /}" ]]; then
+    echo "error: $IDF_BACKEND reported no supported targets" >&2
+    exit 2
+fi
 [[ -n "$CHIPS" ]] || CHIPS="${ALL_CHIPS[*]}"
 
 declare -A RESULT
