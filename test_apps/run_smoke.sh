@@ -40,8 +40,11 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --esp-emu)    EMU="$2"; shift 2 ;;
         --chips)
-            CHIPS="${2:?--chips needs an argument}"
-            CHIPS="${CHIPS//,/ }"
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                echo "error: --chips needs an argument" >&2
+                exit 2
+            fi
+            CHIPS="${2//,/ }"
             if [[ -z "${CHIPS// /}" ]]; then
                 echo "error: --chips needs a non-empty chip list" >&2
                 exit 2
@@ -106,7 +109,6 @@ for chip in $CHIPS; do
         skipped=$((skipped + 1))
         continue
     fi
-    ran=$((ran + 1))
     dir="$OUT/smoke-$chip"
     rsync -a --delete --exclude=build/ --exclude=sdkconfig --exclude=sdkconfig.old \
         --exclude=managed_components/ --exclude=dependencies.lock "$APP/" "$dir/"
@@ -117,18 +119,19 @@ for chip in $CHIPS; do
         RESULT[$chip]="FAIL (build; see $dir/build.log)"; fail_count=$((fail_count + 1))
         tail -20 "$dir/build.log"; continue
     fi
+    ran=$((ran + 1))
     echo "=== $chip: running"
     "$EMU" --chip "$chip" --firmware "$dir/build/merged.bin" --elf "$dir/build/emu_test.elf" \
         --no-panic-intercept --timeout "${TIMEOUT}s" --exit-on 'RESULT_SUMMARY:' \
         > "$dir/emu.log" 2>&1 || true
-    summary="$(grep -o 'RESULT_SUMMARY: .*' "$dir/emu.log" | tail -1)"
+    summary="$(grep -o 'RESULT_SUMMARY: .*' "$dir/emu.log" | tail -1 || true)"
     if [[ "$summary" == *"failed=0"* ]]; then
         RESULT[$chip]="PASS ($summary)"
         passed=$((passed + 1))
     else
         RESULT[$chip]="FAIL (${summary:-no RESULT_SUMMARY within ${TIMEOUT}s}; see $dir/emu.log)"
         fail_count=$((fail_count + 1))
-        grep -E "FAIL|Firmware abort|Guru|Timeout reached" "$dir/emu.log" | tail -10
+        grep -E "FAIL|Firmware abort|Guru|Timeout reached" "$dir/emu.log" | tail -10 || true
     fi
 done
 
@@ -137,7 +140,7 @@ echo "smoke results:"
 for chip in $CHIPS; do printf '  %-9s %s\n' "$chip" "${RESULT[$chip]}"; done
 echo
 echo "summary: ran=$ran passed=$passed failed=$fail_count skipped=$skipped"
-if (( ran == 0 )); then
+if (( ran == 0 && fail_count == 0 )); then
     echo "error: no chip was actually tested; every requested chip was skipped" >&2
     exit 1
 fi
