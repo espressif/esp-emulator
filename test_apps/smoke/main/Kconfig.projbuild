@@ -1,0 +1,23 @@
+menu "esp-emu smoke app"
+
+config EMU_TEST_PIE_FULL
+    bool "Run the full PIE case set and print each case's hashes"
+    depends on SOC_CPU_HAS_PIE
+    default n
+    help
+        The PIE board-vs-emulator differential test
+        (tools/internal/pie/silicon): run the full case set that gen.py writes
+        to main/pie/full/ instead of the smoke suite, and print one line of
+        hashes per case for compare.py. Set by sdkconfig.pie_full.
+
+config EMU_TEST_EE_FULL
+    bool "Run the full ESP32-S3 TIE (ee.*) case set and print each case's state"
+    depends on IDF_TARGET_ESP32S3
+    default n
+    help
+        The ee.* board-vs-emulator differential test
+        (tools/internal/pie/silicon): run the full case set that gen_s3.py
+        writes to main/ee/full/ instead of the smoke suite, and print one line
+        per case for compare_s3.py. Set by sdkconfig.ee_full.
+
+endmenu

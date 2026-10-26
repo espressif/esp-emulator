@@ -1,0 +1,4 @@
+[mapping:coremark]
+archive: lib${COMPONENT_NAME}.a
+entries:
+    * (noflash)

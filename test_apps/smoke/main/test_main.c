@@ -39,6 +39,18 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
+#if EMU_TEST_PIE && CONFIG_EMU_TEST_PIE_FULL
+    /* The PIE differential test (sdkconfig.pie_full): its cases and nothing
+     * else. */
+    pie_print_all();
+    return;
+#endif
+#if EMU_TEST_EE && CONFIG_EMU_TEST_EE_FULL
+    /* Its ESP32-S3 counterpart (sdkconfig.ee_full). */
+    ee_print_all();
+    return;
+#endif
+
     switch (phase_current()) {
     case PHASE_AFTER_SW:
         RUN_TEST("reset_reason_sw",    test_reset_reason_sw);
@@ -110,6 +122,12 @@ void app_main(void)
 #endif
     RUN_TEST("crypto_ecdsa_hw_verify", test_crypto_ecdsa_hw_verify);
     RUN_TEST("crypto_ecdsa_sign",      test_crypto_ecdsa_sign);
+#endif
+#if EMU_TEST_PIE && !CONFIG_EMU_TEST_PIE_FULL
+    RUN_TEST("pie",                    test_pie);
+#endif
+#if EMU_TEST_EE && !CONFIG_EMU_TEST_EE_FULL
+    RUN_TEST("ee",                     test_ee);
 #endif
 #if CONFIG_FREERTOS_NUMBER_OF_CORES > 1
     RUN_TEST("smp_pinned",             test_smp_pinned);

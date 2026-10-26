@@ -1,0 +1,13 @@
+# The ESP32-S3 TIE board-vs-emulator differential test (tools/internal/pie/silicon):
+# the full case set (main/ee/full/, from gen_s3.py) instead of the smoke suite.
+# Add after sdkconfig.defaults and sdkconfig.defaults.esp32s3, in a build
+# directory of its own.
+CONFIG_EMU_TEST_EE_FULL=y
+# The 3312 cases and their state table are about 1.7 MB on their own, so the
+# image takes a 4 MB flash and the app partition of partitions_ee_full.csv.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ee_full.csv"
+# Only the cases run; the NimBLE host the smoke suite builds is dead weight.
+CONFIG_BT_ENABLED=n
+CONFIG_BT_NIMBLE_ENABLED=n

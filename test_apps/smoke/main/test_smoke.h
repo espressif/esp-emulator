@@ -11,6 +11,7 @@
  */
 #pragma once
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -174,6 +175,28 @@ bool test_crypto_ecdsa_sign(void);
 #if SOC_ECDSA_SUPPORT_EXPORT_PUBKEY
 bool test_crypto_ecdsa_export_pubkey(void);
 #endif
+#endif
+
+/* --- test_pie.c ---
+ *
+ * PIE cases checked against silicon, on chips with the rev-3 PIE (ESP32-P4
+ * v3.x, ESP32-S31); main/CMakeLists.txt sets EMU_TEST_PIE.
+ */
+#if EMU_TEST_PIE
+bool test_pie(void);
+/* sdkconfig.pie_full: the full case set, printed instead of checked. */
+void pie_print_all(void);
+#endif
+
+/* --- test_ee.c ---
+ *
+ * ESP32-S3 TIE (`ee.*`) cases checked against silicon; main/CMakeLists.txt
+ * sets EMU_TEST_EE.
+ */
+#if EMU_TEST_EE
+bool test_ee(void);
+/* sdkconfig.ee_full: the full case set, printed instead of checked. */
+void ee_print_all(void);
 #endif
 
 /* --- test_reset.c --- *

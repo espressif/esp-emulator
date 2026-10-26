@@ -1,3 +1,8 @@
 # Enable BLE (NimBLE host) so the smoke test_app can exercise advertising.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+# WiFi, BLE and the PIE cases (test_pie.c) outgrow the single-app-large
+# layout's 1.5 MB factory partition: a 3 MB one on a 4 MB flash.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_large.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

@@ -1,0 +1,6 @@
+# Name,   Type, SubType, Offset,  Size
+# ESP32-S31 only (sdkconfig.defaults.esp32s31): WiFi, BLE and the PIE cases
+# outgrow the 1.5 MB factory partition of the single-app-large layout.
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 0x300000,

@@ -3,3 +3,8 @@
 # an Xtensa callback trampoline (see src/periph/ble_hci.rs).
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+
+# USB-Serial/JTAG as the primary console (how M5Stack ESP32-S3 boards ship).
+# The S3 ROM and bootloader write nothing to UART0 in this configuration, so
+# the suite only passes if the emulator follows the moved console.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

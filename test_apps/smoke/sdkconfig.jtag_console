@@ -1,0 +1,5 @@
+# Variant: USB-Serial-JTAG as the primary console (every M5Stack ESP32-S3 board
+# in esp-board-manager ships this way). Layered on top of sdkconfig.defaults by
+# tests/test_app_smoke.rs via -DSDKCONFIG_DEFAULTS; the per-target
+# sdkconfig.defaults.<chip> files still apply.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

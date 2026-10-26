@@ -1,0 +1,4 @@
+# The PIE board-vs-emulator differential test (tools/internal/pie/silicon):
+# the full case set (main/pie/full/, from gen.py) instead of the smoke suite.
+# Add after sdkconfig.defaults, in a build directory of its own.
+CONFIG_EMU_TEST_PIE_FULL=y

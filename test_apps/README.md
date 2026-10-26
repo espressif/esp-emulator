@@ -5,13 +5,15 @@ chain — mask ROM → 2nd-stage bootloader → app — on every supported chip.
 
 | App | What it exercises | Chips |
 |---|---|---|
-| `smoke/` | system info, NVS, flash, mmap, timers, FreeRTOS, pthread, esp_event, GPIO/RMT/LEDC/PCNT/I2C, crypto (PSA, SHA/AES/HMAC/ECDSA), SMP, WiFi + DHCP, Ethernet + DHCP, BLE advertising, reset reasons, task watchdog | all |
+| `smoke/` | system info, NVS, flash, mmap, timers, FreeRTOS, pthread, esp_event, GPIO/RMT/LEDC/PCNT/I2C, crypto (PSA, SHA/AES/HMAC/ECDSA), SMP, WiFi + DHCP, Ethernet + DHCP, BLE advertising, reset reasons, task watchdog, PIE against recorded silicon results (P4, S31), ESP32-S3 `ee.*` SIMD instructions against recorded silicon results | all |
 | `http_throughput/` | HTTP download throughput over WiFi (Ethernet on P4) | c3, c5, c6, p4, s3, s31 |
 | `tee/` | ESP-TEE: secure storage, attestation, TEE/REE isolation | c5, c6, h2 |
 | `flash_enc/` | flash encryption: key generation, first-boot encryption, encrypted reads | all |
 | `flash32/` | 32 MiB flash (`--flash-size`) | c3, c5, p4, s31 |
 | `psram/` | external RAM (`--psram-size`) | p4, s31 |
+| `coremark/` | CoreMark benchmark: emulation speed per chip | all |
 | `wpa3_sta/` | WPA3-SAE station against the built-in soft AP, repeated init cycles | c3, c5, c6, s3 |
+| `unmapped_probe/` | loads and stores outside ordinary memory: which ones fault, which read 0, as measured on an ESP32-S3 board (`expected_esp32s3.txt`) | s3 |
 
 ## Running the smoke app
 
