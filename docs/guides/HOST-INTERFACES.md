@@ -55,6 +55,7 @@ value, or `err: ...`).
 | `erase-flash` | as `esptool erase-flash`, on the running machine's flash |
 | `erase-region OFFSET LENGTH` | as `esptool erase-region`; numbers in hex or decimal |
 | `write-region OFFSET FILE` | as `esptool write-flash`, reading the data from a path |
+| `read-region OFFSET LENGTH FILE` | as `esptool read-flash`, writing the data to a path |
 | `ping` | answers `ok` |
 
 ```sh

@@ -7,9 +7,9 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--chip <CHIP>` | (required) | Target chip: `esp32c3`, `esp32c5`, `esp32c6`, `esp32h2`, `esp32p4`, `esp32s3`, or `esp32s31` |
-| `--firmware <PATH>` | (required) | Path to merged flash binary |
+| `--firmware <PATH>` | (required) | Path to merged flash image: raw, or Intel HEX from `esptool merge-bin --format hex` (detected from the contents) |
 | `--rom <PATH>` | embedded | Path to ROM ELF file (overrides the built-in default for `--chip`) |
-| `--elf <PATH>...` | — | Application ELF(s) for BLE/Thread interception, panic intercepts and symbolised backtraces (e.g. `build/project.elf`). At app start the emulator reads the ELF SHA-256 the running app's descriptor records and uses the ELF it names, so pass both builds for an OTA test (`--elf old.elf new.elf`) and the new build's ELF takes over at the reboot. An ELF from some other build stays out, with a warning. |
+| `--elf <PATH>...` | — | Application ELF(s) for BLE/Thread interception, panic intercepts and symbolised backtraces (e.g. `build/project.elf`). At app start the emulator reads the ELF SHA-256 the running app's descriptor records and uses the ELF it names, so pass both builds for an OTA test (`--elf old.elf new.elf`) and the new build's ELF takes over at the reboot. A `strip --strip-debug` copy of the build is recognised by its app descriptor and used with a warning; an ELF from some other build stays out, with a warning. |
 | `--no-panic-intercept` | off | With `--elf`, don't stop at the first firmware panic: the firmware's own panic handler runs and reboots or halts per its sdkconfig. For firmware that panics on purpose (task-watchdog reset tests, deliberate `abort()`); backtraces and BLE interception stay. |
 | `--efuse <PATH>` | — | Path to eFuse binary (336 bytes, QEMU-compatible). State is always saved back on exit (eFuses are one-time-programmable). |
 | `--timeout <DURATION>` | — | Exit after duration (e.g. `5s`, `500ms`) |
@@ -17,7 +17,7 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--batch-size <N>` | `50000` | Instructions per iteration |
 | `--skip-bootloader` | off | Load app directly from partition table, skipping 2nd-stage bootloader (firmware-entry path; only meaningful with `--skip-rom`). Picks the app the IDF bootloader would: the OTA slot `otadata` selects, else `factory`, else `ota_0`, probing the other slots when the chosen one is empty |
 | `--skip-rom` | off | Reset the CPU at the firmware/bootloader entry instead of the real mask ROM. Default executes the ROM, which is required for KEY_SOURCE_KEY_MGR flash-key recovery and other eFuse-driven cold-boot decisions. |
-| `--save-state` | off | Save flash state to disk on exit (overwrites firmware file) |
+| `--save-state` | off | Save flash state to disk on exit (overwrites firmware file, in the format it was read in) |
 | `--inject <DATA>` | — | Payload to inject into UART RX (supports `\n` escape). Repeatable. |
 | `--inject-on <STRING>` | — | Trigger string in UART output that causes injection (paired with `--inject`). Repeatable. |
 | `--net <BACKEND>` | `tap0` if present on Linux, else `user` | Network backend: `user` (slirp-style, any OS), `user,hostfwd=tcp::H-:G,…`, `user,restrict=yes`, `user,dns=1.1.1.1`, `user,mdns-nat=yes` (Matter / mDNS service NAT), `tap,ifname=tap0` (Linux), `vmnet` (macOS) |
@@ -28,17 +28,18 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--wifi-sae-pwe <PWE>` | `both` | SAE password element the AP accepts: `both`, `h2e`, `hunt-and-peck` |
 | `--ble-hci <BACKEND>` | — | BLE HCI backend: `tcp:host:port` for Bumble/virtual controller, `hci0` for Linux adapter |
 | `--thread-sim <SPEC>` | — | IEEE 802.15.4 / Thread bridge, e.g. `bind:9001,peer:127.0.0.1:9002`. Forwards radio frames over localhost UDP to another emulator instance. Requires `--elf`. |
-| `--uart-tcp <HOST:PORT>` | — | Bridge UART0 to a TCP server (e.g. `127.0.0.1:5555`); esptool connects via `socket://`. Mirrors QEMU's `-serial tcp::PORT,server,nowait`. While active, UART RX comes from the socket and TX goes to it (stdin/stdout disconnected). |
+| `--uart-tcp <HOST:PORT>` | — | Bridge UART0 to a TCP server (e.g. `127.0.0.1:5555`); esptool connects via `socket://`. Mirrors QEMU's `-serial tcp::PORT,server,nowait`. While active, UART0 RX comes from the socket and UART0 TX goes to it, whichever console the firmware selects (stdin disconnected); a USB-Serial/JTAG console still prints to stdout, so a binary UART0 peer and USB logging work in one session. With `--strap-mode 0x04` the socket is the USB-Serial/JTAG download port instead. |
 | `--uart1-tcp <HOST:PORT>` | — | Bridge UART1 to a TCP server. Side channel for simulating an external serial device (sensor, GPS, modem) with a host-side script — UART0 keeps stdin/stdout and `--exit-on`/`--inject-on`. Without a connected client, UART1 TX is discarded. |
 | `--psram-size <SIZE>` | `8M` (C5, S3), `16M` (P4, S31) | External RAM the board is modelled with: `4M`/`8M`/`16M`/`32M`/`64M`, or `0` for no device. Only the chips with external RAM take it. Firmware cannot choose — see [PSRAM Size](#psram-size). |
 | `--strap-mode <HEX>` | — | GPIO_STRAP value at reset. `0x02` = UART download mode (jumps to ROM entry instead of firmware entry; remapped per chip, so pass `0x02` on every target); `0x04` = USB-Serial-JTAG download; `0x08` = SPI flash boot (default). Mirrors QEMU's `-global driver=esp32cN.gpio,property=strap_mode,value=…`. |
-| `--control-tcp <HOST:PORT>` | — | Host control channel: newline-delimited `reset`, `reset --soft`, `erase-flash`, `erase-region OFF LEN`, `write-region OFF FILE`, `ping`. Acts on the running machine, so one process and one output stream survive a reset — see [Host Control Channel](HOST-INTERFACES.md#host-control-channel). |
-| `--gdb <PORT>` | — | Serve a GDB remote stub on this port (QEMU's `-s` is 1234). `riscv32-esp-elf-gdb` / `xtensa-esp32s3-elf-gdb` connect with `target remote :PORT`. |
+| `--control-tcp <HOST:PORT>` | — | Host control channel: newline-delimited `reset`, `reset --soft`, `erase-flash`, `erase-region OFF LEN`, `write-region OFF FILE`, `read-region OFF LEN FILE`, `ping`. Acts on the running machine, so one process and one output stream survive a reset — see [Host Control Channel](HOST-INTERFACES.md#host-control-channel). |
+| `--gdb <PORT>` | — | Serve a GDB remote stub on this port (QEMU's `-s` is 1234). `riscv32-esp-elf-gdb` / `xtensa-esp32s3-elf-gdb` connect with `target remote :PORT`. On dual-core chips each core is a thread (`Thread 1` = CPU0, `Thread 2` = CPU1), so `info threads`, `thread N` and breakpoints hit on CPU1 work as under QEMU. A firmware panic or CPU fault stops the target with `SIGSEGV` for inspection instead of exiting. |
 | `--gdb-halt` | off | Hold the CPU at the reset vector until a GDB client connects (QEMU's `-S`). |
 | `--trace <FILE>` | — | Write a per-task Chrome Trace Event trace for Perfetto; requires `--elf`. `--trace-pc-period N` sets the PC sample rate for the hot-symbol table (default 16 ticks, 0 disables). See [Execution Tracing and Profiling](HOST-INTERFACES.md#execution-tracing-and-profiling). |
+| `--log-file <FILE>` | — | Append the emulator's log lines to FILE instead of writing them to stderr; the firmware console stays on stdout. For a harness that reads stdout and stderr as one stream, where a log line written while the firmware is partway through a line otherwise lands inside it. The startup banner and fatal errors still go to stderr. |
 | `--i2c-dev <PORT:ADDR[,OPTS]>` | — | Put an I2C device at 7-bit `ADDR` on HP I2C port `PORT`, beside the built-in EEPROM at 0x50. It ACKs and reads back what was written, so a board's IO expander, touch controller, PMIC or sensor gets past init. Repeatable. Options: `width=2` (16-bit register addresses), `fill=0xNN` (initial register value, default 0xFF), `reg=REG=VAL` (preload a register, e.g. a chip ID). See [I2C Devices](#i2c-devices). |
 | `--rmt-loopback <TX:RX>` | — | Feed an RMT TX channel's symbols into an RX channel, standing in for a wire between two pins (runs the stock `ir_nec_transceiver` example). |
-| `--console <MODE>` | `auto` | Console that stdin/stdout (and `--exit-on`/`--inject-on`) follow. `auto`: UART0 until the firmware selects USB-Serial/JTAG in the ROM console selector (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG` builds), then EP1 — IDF's default "UART0 + USB-Serial/JTAG secondary" prints once either way. `uart0`: always UART0, EP1 output discarded. `usb-jtag`: EP1 from the first byte — needed for firmware that drives USB-Serial/JTAG outside the IDF console layer (Zephyr, esp-hal, Arduino HWCDC), which never writes the selector. |
+| `--console <MODE>` | `auto` | Console that stdin/stdout (and `--exit-on`/`--inject-on`) follow; under `--uart-tcp` (outside download mode) only a USB-Serial/JTAG or USB CDC-ACM console reaches stdout, UART0 being the socket's. `auto`: UART0 until the firmware selects USB-Serial/JTAG in the ROM console selector (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG` builds), then EP1 — IDF's default "UART0 + USB-Serial/JTAG secondary" prints once either way. In `auto` a TinyUSB CDC-ACM console on a USB-OTG port (S3, P4, S31) joins the output and takes stdin once it has printed, unless a UART driver (a REPL) is reading UART0. `uart0`: always UART0; EP1 and CDC output discarded. `usb-jtag`: EP1 from the first byte, UART0 and CDC output discarded — needed for firmware that drives USB-Serial/JTAG outside the IDF console layer (Zephyr, esp-hal, Arduino HWCDC), which never writes the selector. `usb-cdc`: the first CDC-ACM port the host configures, alone, until it goes down; UART0, EP1 and other ports' output discarded, and stdin typed before a port is up is held for it. Refused on chips without USB-OTG and in download mode. |
 
 ## Log Levels
 
@@ -113,6 +114,11 @@ The flag moves the die's answer and the backing store together, so what
 firmware detects is what it can actually use. It does not move the address
 window: that is the SoC's (64 MB on P4/S31), and a read past the device returns
 0 the way an absent chip does.
+
+C5 and S3 stay at 8 MB, the largest module shipped for either, because their
+flash and PSRAM share one 32 MB address window: a die that fills it leaves
+`esp_partition` no page to map the partition table, and firmware fails at boot
+with `load_partitions returned 0x101` (`CONFIG_SPI_FLASH_ROM_IMPL`) or `0x105`.
 
 `--psram-size 0` fits no die at all. The driver's connectivity check then fails
 and firmware takes its not-found path — `CONFIG_SPIRAM_IGNORE_NOTFOUND=y` boots

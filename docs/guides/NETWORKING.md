@@ -7,16 +7,16 @@ How firmware gets on a network under the emulator: the built-in WiFi soft AP (WP
 The emulator includes a built-in WiFi soft access point with WPA2-PSK and WPA3-Personal (SAE) support. Firmware that connects to WiFi will:
 
 1. **Scan** — The AP sends beacons and probe responses with the configured SSID
-2. **Authenticate** — Open System, or SAE for WPA3
+2. **Authenticate** — Open System, or SAE commit/confirm for WPA3
 3. **Associate** — AP assigns AID=1
-4. **4-way handshake** — Full EAPOL handshake with the PSK or SAE key (when password is set)
+4. **4-way handshake** — Full EAPOL handshake with the PSK or SAE key (when password is set), including the IGTK for PMF
 5. **DHCP** — Built-in DHCP server assigns 192.168.4.2 (gateway 192.168.4.1)
 
 This works automatically — ESP-IDF WiFi station firmware will connect and receive an IP address. Use `--wifi-ssid` and `--wifi-password` to match your firmware's WiFi configuration. Default: SSID `myssid`, password `mypassword`.
 
-With a password set, the AP runs WPA2/WPA3 transition mode, so there is nothing to configure per firmware: a WPA2 station uses WPA2-PSK, a WPA3 station uses SAE, and firmware that requires WPA3 with protected management frames connects as it would to a real WPA3 network. Reconnects reuse the cached SAE result.
+With a password set, the AP advertises WPA2/WPA3 transition mode: the PSK and SAE key-management suites, PMF capable, and SAE hash-to-element. The station picks what it supports, so there is nothing to configure per firmware — a WPA2 station uses PSK, a WPA3 station uses SAE (hash-to-element or hunting-and-pecking, as the firmware's `sae_pwe_h2e` asks), and firmware with `threshold.authmode = WIFI_AUTH_WPA3_PSK` and `pmf_cfg.required = true` connects as it would to a real WPA3 network. SAE PMKSA caching is supported, so a reconnect skips the SAE exchange. Enterprise networks are covered below.
 
-**Enterprise (802.1X)**: `--wifi-auth wpa3-enterprise --wifi-radius 127.0.0.1:1812,testing123` makes the AP authenticate stations against a RADIUS server, so EAP-TLS, PEAP and TTLS work with whatever the server supports. hostapd's built-in EAP server is enough, using the certificates from ESP-IDF's `examples/wifi/wifi_enterprise`:
+**Enterprise (802.1X)**: `--wifi-auth wpa3-enterprise --wifi-radius 127.0.0.1:1812,testing123` makes the AP an 802.1X authenticator that relays EAP to a RADIUS server and takes the PMK from the MSK it returns, so EAP-TLS, PEAP and TTLS all work with whatever the server supports. hostapd's built-in EAP server is enough, using the certificates from ESP-IDF's `examples/wifi/wifi_enterprise`:
 
 ```
 # hostapd.conf
@@ -31,9 +31,9 @@ server_cert=server.crt
 private_key=server.key
 ```
 
-Run `hostapd hostapd.conf &`, then the example with `--wifi-ssid ESP_ENTERPRISE_AP` and the two flags above. `wpa2-enterprise` advertises 802.1X without PMF; `wpa3-enterprise` requires PMF. WPA3-Enterprise 192-bit (Suite-B) is not supported.
+`hostapd hostapd.conf &`, then run the example with `--wifi-ssid ESP_ENTERPRISE_AP` and the two flags above. `wpa2-enterprise` advertises the 802.1X AKM without PMF; `wpa3-enterprise` uses 802.1X-SHA256 with PMF required. Suite-B 192-bit is not supported.
 
-To test a firmware's security policy rather than its connection, pin the AP: `--wifi-auth wpa3-sae` is a WPA3-only network that refuses WPA2 stations, `--wifi-auth wpa2-psk` is a WPA2-only AP that WPA3-only firmware must reject, and `--wifi-sae-pwe hunt-and-peck` makes firmware that insists on hash-to-element fail as it would on an older AP.
+To test a firmware's security policy rather than its connection, pin the AP: `--wifi-auth wpa3-sae` is a WPA3-only network (PMF required, a PSK association is refused), `--wifi-auth wpa2-psk` is the pre-0.45 WPA2-only AP that WPA3-only firmware must reject, and `--wifi-sae-pwe hunt-and-peck` hides hash-to-element so a firmware set to `WPA3_SAE_PWE_HASH_TO_ELEMENT` fails as it would on a legacy AP.
 
 For real network connectivity, run with either [User-mode Networking](#user-mode-networking-no-host-setup) (zero setup, the default when `--net` is omitted and no `tap0` is available) or [TAP Networking](#tap-networking) (bridged to host interface; picked automatically on Linux when `tap0` is set up).
 
