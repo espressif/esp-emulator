@@ -201,7 +201,7 @@ through the same SDIO bridge:
 
 | P4 host firmware | What it exercises |
 |---|---|
-| [`esp-hosted-mcu/examples/host_peer_data_transfer`](https://github.com/espressif/esp-hosted-mcu/tree/main/examples/host_peer_data_transfer) | RPC custom-data echo (CAT/DOG/HUMAN ↔ MEOW/WOOF/HELLO) at 1 B – 8166 B payloads |
+| [`esp-hosted-mcu/examples/peer_data_transfer/mcu_host`](https://github.com/espressif/esp-hosted-mcu/tree/main/examples/peer_data_transfer/mcu_host) | RPC custom-data echo (CAT/DOG/HUMAN ↔ MEOW/WOOF/HELLO) at 1 B – 8166 B payloads |
 | `$IDF_PATH/examples/wifi/getting_started/station` | STA connect + DHCP + IPv6 SLAAC |
 | `$IDF_PATH/examples/wifi/scan` | Active scan + AP list |
 | `$IDF_PATH/examples/wifi/iperf` | Console-driven STA + DHCP (connect phase) |
