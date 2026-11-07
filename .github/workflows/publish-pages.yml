@@ -4,6 +4,11 @@
 # www/ folder as the site. The page runs the emulator entirely in the
 # visitor's browser; Pages only serves the files.
 #
+# A pre-release is not deployed: the site stays on the last full release,
+# and a pre-release's pages run from its own wasm tarball, served locally.
+# Only an emulator release (tag vX.Y.Z) deploys; esp-emu-relay's own
+# releases (relay-vX.Y.Z) carry no page.
+#
 # Source of truth is the mirror itself (.github/ is not synced from the
 # esp-emulator source repo). Re-run by hand with a version to redeploy an
 # older release or to publish the first page before the next release.
@@ -31,6 +36,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: ${{ github.event_name != 'release' || (startsWith(github.event.release.tag_name, 'v') && !github.event.release.prerelease) }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

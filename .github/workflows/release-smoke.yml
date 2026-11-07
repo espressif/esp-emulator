@@ -16,6 +16,9 @@ on:
 
 jobs:
   smoke:
+    # Only an emulator release (tag vX.Y.Z); esp-emu-relay's own releases
+    # (relay-vX.Y.Z) have no esp-emu to test.
+    if: ${{ github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
