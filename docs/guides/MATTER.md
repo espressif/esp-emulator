@@ -11,7 +11,10 @@ chip-tool → BlueZ → /dev/vhci → Bumble Controller ←LocalLink→ Bumble C
                                   (bluez-side)                    (emu-side)
 ```
 
-After commissioning, the device communicates over WiFi/IPv6 through the TAP interface — no bridge needed for operational commands.
+After commissioning, the device communicates over WiFi/IP through the emulator's
+network backend (user-mode with `mdns-nat=yes`, or TAP) — no bridge needed for
+operational commands. Commissioning, control and `--save-state` work on either
+backend; the OTA section needs TAP (see there).
 
 ## Prerequisites
 
@@ -103,7 +106,7 @@ esptool.py --chip esp32c3 merge-bin \
 python3 tools/vhci_bridge.py
 ```
 
-The bridge opens `/dev/vhci` (creating a new `hciX` adapter visible to BlueZ), prints the adapter index, and then waits for esp-emu to connect on TCP port 9544:
+The bridge opens `/dev/vhci` (creating a new `hciX` adapter visible to BlueZ), prints the adapter index, and then waits for esp-emu to connect on TCP port 9544. If you skip it, `hciconfig` lists the bridge's adapter as `Bus: Virtual`:
 
 ```
 [*] Opening /dev/vhci...
@@ -121,8 +124,14 @@ Note the `--ble-controller` number — you'll need it for chip-tool.
   --chip esp32c3 \
   --firmware build/merged_flash.bin \
   --elf build/light.elf \
-  --ble-hci tcp:localhost:9544
+  --ble-hci tcp:localhost:9544 \
+  --net "user,mdns-nat=yes"
 ```
+
+Pass `--net` explicitly: without `mdns-nat=yes` the user-mode backend does not
+rewrite the device's mDNS records, chip-tool resolves the device to an address
+it cannot reach, and operational commands time out (`CHIP Error 0x00000032`).
+Use `--net "tap,ifname=tap0"` instead if you set up TAP.
 
 Wait for the firmware to print:
 
@@ -243,13 +252,13 @@ A `PinnedAddressController` subclass prevents BlueZ from changing the random add
 3. **BTP handshake**: chip-tool discovers Matter GATT service, subscribes to TX characteristic, writes capabilities request to RX characteristic → BTP v4 negotiated
 4. **PASE (SPAKE2+)**: Secure session established using the setup PIN code (Pake1 → Pake2 → Pake3)
 5. **Commissioning stages**: ReadCommissioningInfo → ArmFailSafe → Attestation → CSR → NOC → WiFiNetworkSetup → WiFiNetworkEnable → FindOperational → SendComplete
-6. **WiFi handoff**: Device connects to the soft AP via TAP, gets IPv6 address, advertises `_matter._tcp` via mDNS
+6. **WiFi handoff**: Device connects to the emulated soft AP, gets IPv4 and IPv6 addresses, advertises `_matter._tcp` via mDNS (rewritten to `127.0.0.1` / `::1` under `mdns-nat=yes`)
 7. **CASE session**: chip-tool discovers device via mDNS, establishes operational CASE session over WiFi/UDP
 8. **CommissioningComplete**: Sent over CASE session, commissioning finishes
 
 ### Operational control
 
-Post-commissioning commands use CASE (Certificate Authenticated Session Establishment) over WiFi/IPv6 link-local addresses through the TAP interface. Each chip-tool invocation re-establishes a CASE session, which adds a few seconds of overhead.
+Post-commissioning commands use CASE (Certificate Authenticated Session Establishment) over UDP: through the `mdns-nat` forwarders on `127.0.0.1:5540` under user-mode networking, or straight to the device's IPv6 address over TAP. Each chip-tool invocation re-establishes a CASE session, which adds a few seconds of overhead.
 
 ## Troubleshooting
 
@@ -281,9 +290,16 @@ A previous bridge instance is still running. Kill it with `pkill -f vhci_bridge`
 
 Matter OTA updates can be tested end-to-end using chip-ota-provider-app as the OTA provider and the emulated device as the OTA requestor.
 
+OTA needs **TAP networking** (`sudo tools/setup-tap.sh --ipv6`, then run the
+commissioned image with `--net "tap,ifname=tap0"`). Under user-mode networking
+the provider commissions and the announce reaches the device, but the device
+then dials the provider at the host's link-local IPv6 address, which user-mode
+networking does not route, so the CASE session to the provider times out and
+the requestor backs off for a day.
+
 ### Prerequisites
 
-- A commissioned Matter device running in esp-emu (see steps above)
+- A commissioned Matter device running in esp-emu over TAP (see steps above)
 - chip-ota-provider-app (from connectedhomeip)
 - An OTA image with Matter header (generated via `ota_image_tool.py` or `CONFIG_CHIP_OTA_IMAGE_BUILD`)
 

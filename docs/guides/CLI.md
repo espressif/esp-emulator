@@ -35,10 +35,13 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--control-tcp <HOST:PORT>` | — | Host control channel: newline-delimited `reset`, `reset --soft`, `erase-flash`, `erase-region OFF LEN`, `write-region OFF FILE`, `read-region OFF LEN FILE`, `ping`. Acts on the running machine, so one process and one output stream survive a reset — see [Host Control Channel](HOST-INTERFACES.md#host-control-channel). |
 | `--gdb <PORT>` | — | Serve a GDB remote stub on this port (QEMU's `-s` is 1234). `riscv32-esp-elf-gdb` / `xtensa-esp32s3-elf-gdb` connect with `target remote :PORT`. On dual-core chips each core is a thread (`Thread 1` = CPU0, `Thread 2` = CPU1), so `info threads`, `thread N` and breakpoints hit on CPU1 work as under QEMU. A firmware panic or CPU fault stops the target with `SIGSEGV` for inspection instead of exiting. |
 | `--gdb-halt` | off | Hold the CPU at the reset vector until a GDB client connects (QEMU's `-S`). |
+| `--cosim-board <FILE>` | — | Run the `.wasm` parts a JSON board file places, inside the emulator. See [Run parts in the command-line emulator](PARTS.md#run-parts-in-the-command-line-emulator). |
+| `--cosim-tcp <HOST:PORT>` | — | Serve the co-simulation bus on a socket, for device models that are not `.wasm` parts; goes with `--cosim-board`. See [Co-simulation over TCP](HOST-INTERFACES.md#co-simulation-over-tcp). |
+| `--cosim-log <FILE>` | — | With `--cosim-board`: write every message between the chip and the parts to FILE, one JSON line each, as it happens. `--cosim-log-filter KINDS` keeps only those of `ClockSync`, `GpioLevel`, `GpioDrive`, `Register`, `RegisterAck`, `BusRequest`, `BusReply` and `ChipReset`, comma-separated; clock heartbeats are left out unless named. |
 | `--trace <FILE>` | — | Write a per-task Chrome Trace Event trace for Perfetto; requires `--elf`. `--trace-pc-period N` sets the PC sample rate for the hot-symbol table (default 16 ticks, 0 disables). See [Execution Tracing and Profiling](HOST-INTERFACES.md#execution-tracing-and-profiling). |
 | `--log-file <FILE>` | — | Append the emulator's log lines to FILE instead of writing them to stderr; the firmware console stays on stdout. For a harness that reads stdout and stderr as one stream, where a log line written while the firmware is partway through a line otherwise lands inside it. The startup banner and fatal errors still go to stderr. |
-| `--i2c-dev <PORT:ADDR[,OPTS]>` | — | Put an I2C device at 7-bit `ADDR` on HP I2C port `PORT`, beside the built-in EEPROM at 0x50. It ACKs and reads back what was written, so a board's IO expander, touch controller, PMIC or sensor gets past init. Repeatable. Options: `width=2` (16-bit register addresses), `fill=0xNN` (initial register value, default 0xFF), `reg=REG=VAL` (preload a register, e.g. a chip ID). See [I2C Devices](#i2c-devices). |
-| `--rmt-loopback <TX:RX>` | — | Feed an RMT TX channel's symbols into an RX channel, standing in for a wire between two pins (runs the stock `ir_nec_transceiver` example). |
+| `--i2c-dev <PORT:ADDR[,OPTS]>` | — | Put an I2C device at 7-bit `ADDR` on HP I2C port `PORT`, beside the built-in EEPROM at 0x50 (one at 0x50 answers in its place: `--i2c-dev 0:0x50,width=2` is the 24C32 IDF's `i2c_eeprom` example expects). It ACKs and reads back what was written, so a board's IO expander, touch controller, PMIC or sensor gets past init. Repeatable. Options: `width=2` (16-bit register addresses), `fill=0xNN` (initial register value, default 0xFF), `reg=REG=VAL` (preload a register, e.g. a chip ID). On a port a virtual part is wired to, parts alone answer. See [I2C Devices](#i2c-devices). The same device is a `devices` entry of type `regfile` in a `--cosim-board` file ([PARTS.md](PARTS.md#run-parts-in-the-command-line-emulator)). |
+| `--rmt-loopback <TX:RX>` | — | Feed an RMT TX channel's symbols into an RX channel, standing in for a wire between two pins (runs the stock `ir_nec_transceiver` example). The same wire is a `wires` entry of type `rmt-loopback` in a `--cosim-board` file. |
 | `--console <MODE>` | `auto` | Console that stdin/stdout (and `--exit-on`/`--inject-on`) follow; under `--uart-tcp` (outside download mode) only a USB-Serial/JTAG or USB CDC-ACM console reaches stdout, UART0 being the socket's. `auto`: UART0 until the firmware selects USB-Serial/JTAG in the ROM console selector (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG` builds), then EP1 — IDF's default "UART0 + USB-Serial/JTAG secondary" prints once either way. In `auto` a TinyUSB CDC-ACM console on a USB-OTG port (S3, P4, S31) joins the output and takes stdin once it has printed, unless a UART driver (a REPL) is reading UART0. `uart0`: always UART0; EP1 and CDC output discarded. `usb-jtag`: EP1 from the first byte, UART0 and CDC output discarded — needed for firmware that drives USB-Serial/JTAG outside the IDF console layer (Zephyr, esp-hal, Arduino HWCDC), which never writes the selector. `usb-cdc`: the first CDC-ACM port the host configures, alone, until it goes down; UART0, EP1 and other ports' output discarded, and stdin typed before a port is up is held for it. Refused on chips without USB-OTG and in download mode. |
 
 ## Log Levels
@@ -159,6 +162,18 @@ esp-emu --chip esp32s3 --firmware app.bin \
   --i2c-dev 0:0x34,reg=0x03=0x4a
 ```
 
+The same devices as a board file, which keeps a board's parts, devices and
+wires in one place
+([PARTS.md](PARTS.md#run-parts-in-the-command-line-emulator)):
+
+```json
+{ "devices": {
+    "expander": { "type": "regfile", "i2c": 0, "addr": "0x20" },
+    "touch":    { "type": "regfile", "i2c": 0, "addr": "0x5a", "width": 2, "fill": 0, "regs": { "0xd006": "0xab" } },
+    "pmic":     { "type": "regfile", "i2c": 0, "addr": "0x34", "regs": { "0x03": "0x4a" } }
+} }
+```
+
 `PORT` is the IDF `i2c_port_t`. `width=2` selects 16-bit (big-endian)
 register addresses. `fill` is what every register reads until written
 (default 0xFF, like a pulled-up, unprogrammed part). `reg=REG=VAL` preloads
@@ -166,8 +181,9 @@ one register — a chip ID the driver checks, a status byte it polls for.
 
 The device has no behaviour beyond read-back: an expander's input port does
 not follow its output latch or the pin level, and a sensor's data registers
-hold whatever was preloaded. Real device models and host-side device bridges
-are tracked separately.
+hold whatever was preloaded. A device with behaviour of its own is a virtual
+part ([PARTS.md](PARTS.md)); on a port a part is wired to, parts alone answer,
+and neither the built-in EEPROM nor an `--i2c-dev` device is asked.
 
 ## Chip Revision (eFuse)
 

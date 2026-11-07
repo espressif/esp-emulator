@@ -245,7 +245,7 @@ is internal to the emulator process. For those, run the BR with
   OpenThread relies on that (`OT_RADIO_CAPS_TRANSMIT_SEC`) and never
   encrypts in software, while receivers always validate in software. The
   emulator therefore does the CCM* pass itself in
-  `periph/ieee802154_sec.rs`. Without it every secured frame — that is,
+  `periph/radio/ieee802154_sec.rs`. Without it every secured frame — that is,
   everything from the Child ID Response onward — is dropped by the peer
   with a MIC failure, and attaching loops forever on
   `Failed to process Child ID Request - Security`.
@@ -301,7 +301,7 @@ Rebuild the emulator from current source.
 **Device stays `detached` forever (no attachment)**
 
 - Verify the bridge actually transports frames: run with
-  `RUST_LOG=esp_emu::periph::thread_radio=debug` and check for
+  `RUST_LOG=esp_emu::periph::radio::thread_radio=debug` and check for
   `Thread: TX` and `Thread: RX` log lines on both sides.
 - Confirm both nodes have the same channel (`ot channel`) and panid
   (`ot panid`).

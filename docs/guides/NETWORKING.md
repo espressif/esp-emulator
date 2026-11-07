@@ -184,7 +184,7 @@ firmware doesn't phone home.
   The guest IP lives inside the emulator process; use `hostfwd` to expose
   specific ports instead.
 - **No packet capture on a host interface**: `tcpdump` sees nothing because
-  the frames never leave user space. Use `RUST_LOG=esp_emu::net_user=trace`
+  the frames never leave user space. Use `RUST_LOG=esp_emu::host::net_user=trace`
   for backend-level tracing.
 - Not yet implemented: IP fragmentation, TFTP server, `guestfwd`.
 
