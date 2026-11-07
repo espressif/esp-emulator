@@ -1,0 +1,28 @@
+# A virtual part: an Atmel AT93C46D three-wire serial EEPROM on SPI, compiled
+# to a WebAssembly module that the emulator loads. README.md says what it
+# models and how to build it.
+#
+# Its own workspace (the empty [workspace] table below), so it builds on its own
+# and nothing here enters esp-emu's dependency graph.
+[workspace]
+
+[package]
+name = "eeprom93c46"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+# A cdylib builds to the .wasm module a host loads.
+crate-type = ["cdylib"]
+
+[dependencies]
+# The part SDK: the contract's types, the `Device` trait and `export_part!`.
+# A part kept outside this repository points this at its copy of esp-part.
+esp-part = { path = "../../../esp-part" }
+
+[profile.release]
+# A smaller module loads faster in a browser.
+opt-level = "s"
+lto = true
+strip = true

@@ -1,0 +1,3 @@
+{ "parts": {
+    "thermometer": { "module": "tmp123.wasm", "pins": { "CS": 7, "SCK": 6, "SO": 2 } }
+} }

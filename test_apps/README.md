@@ -14,6 +14,12 @@ chain — mask ROM → 2nd-stage bootloader → app — on every supported chip.
 | `coremark/` | CoreMark benchmark: emulation speed per chip | all |
 | `wpa3_sta/` | WPA3-SAE station against the built-in soft AP, repeated init cycles | c3, c5, c6, s3 |
 | `unmapped_probe/` | loads and stores outside ordinary memory: which ones fault, which read 0, as measured on an ESP32-S3 board (`expected_esp32s3.txt`) | s3 |
+| `usb_cdc/` | TinyUSB CDC-ACM console on every USB-OTG port: the virtual USB host enumerates the device, the app's output arrives over the CDC port, and a typed line echoes back (`--console usb-cdc`) | s3, p4, s31 |
+| `gpio_button/` | a GPIO input with pull-up and an interrupt that prints every edge; the firmware of the [button board](../examples/boards/button/README.md) and the browser button demo | c3 |
+| `i2c_sensor/` | reads an SHT31 on every I2C port with the stock `esp_driver_i2c`; the firmware of the [sensor board](../examples/boards/sensor/README.md) and the browser sensor demo | c3, s3, p4 |
+| `spi_tmp123/` | reads a TMP123 on every SPI bus with the stock `esp_driver_spi`, polling, by interrupt and through DMA; the firmware of the [thermometer board](../examples/boards/thermometer/README.md) | c3, s3, p4, s31 |
+| `spi_qspi/` | quad-SPI writes as real firmware makes them: an `esp_lcd` QSPI panel and a flash-style command/address/dummy device on one bus, each a virtual part | c3, c5, s3, p4 |
+| `cosim_high_pads/` | virtual parts on pads above GPIO 31: an I2C device on each port, a button and an LED, through the stock `esp_driver_i2c` and `gpio` drivers | p4, s3, s31 |
 
 ## Running the smoke app
 

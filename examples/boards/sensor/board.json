@@ -1,0 +1,3 @@
+{ "parts": {
+    "sensor": { "module": "sht31.wasm", "pins": { "SCL": 6, "SDA": 5 } }
+} }

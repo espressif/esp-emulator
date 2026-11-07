@@ -1,0 +1,22 @@
+# The part SDK: write a device, and `export_part!` makes it a part.
+#
+# Its own workspace (the empty [workspace] table below), so it builds on its own
+# and nothing here enters esp-emu's dependency graph. The example parts in
+# examples/parts/ depend on it by path.
+[workspace]
+
+[package]
+name = "esp-part"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Write a virtual part for the esp-emu co-simulation bus: a device type, one macro, a .wasm module"
+
+[dependencies]
+prost = "0.14"
+
+[build-dependencies]
+# build.rs turns proto/esp_cosim.proto into Rust types. protox is a .proto
+# compiler written in Rust, so the build needs no `protoc` installed.
+prost-build = "0.14"
+protox = "0.9"

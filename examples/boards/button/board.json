@@ -1,0 +1,3 @@
+{ "parts": {
+    "button": { "module": "pushbutton.wasm", "pins": { "A": 9 } }
+} }

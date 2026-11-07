@@ -1,0 +1,3 @@
+{ "parts": {
+    "eeprom": { "module": "eeprom93c46.wasm", "pins": { "CS": 10, "SK": 11, "DI": 12, "DO": 13 } }
+} }
