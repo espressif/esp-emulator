@@ -56,6 +56,8 @@ async def main():
         "-v", "--verbose", action="store_true", help="Enable debug logging"
     )
     args = parser.parse_args()
+    # The adapter index line is what a script waits for; don't hold it in a pipe buffer.
+    sys.stdout.reconfigure(line_buffering=True)
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)

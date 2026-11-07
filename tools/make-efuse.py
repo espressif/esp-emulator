@@ -13,9 +13,9 @@
 # major * 100 + minor, reading the two halves through the per-chip
 # efuse_ll_get_chip_wafer_version_{major,minor}() accessors. CHIPS below
 # mirrors those bit positions from components/efuse/<chip>/esp_efuse_table.csv;
-# The inject_bits entries mirror EfuseChipConfig::default_wafer_bits in
-# src/periph/<chip>/efuse.rs, so the script rejects any revision the emulator
-# would override rather than emitting a blob that boots as something else.
+# The inject_bits entries mirror the default wafer bits the emulator injects
+# per chip, so the script rejects any revision the emulator would override
+# rather than emitting a blob that boots as something else.
 
 import argparse
 import struct
@@ -186,8 +186,7 @@ def main():
     if got != (major, minor):
         alts = reachable(a.chip, major)
         print(f"error: esp-emu would report v{got[0]}.{got[1]}, not v{major}.{minor}.\n"
-              f"  Its default wafer bits are re-injected when every wafer field reads zero\n"
-              f"  (EfuseChipConfig::default_wafer_* in src/periph/{a.chip}/efuse.rs).\n"
+              f"  Its default wafer bits are re-injected when every wafer field reads zero.\n"
               f"  Reachable minors for major {major}: "
               f"{', '.join(str(m) for m in alts) if alts else '(none)'}",
               file=sys.stderr)

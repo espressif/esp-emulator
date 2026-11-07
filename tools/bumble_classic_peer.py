@@ -12,8 +12,8 @@ connects to the firmware over BR/EDR and drives one profile:
 
 Start it first, then esp-emu with --ble-hci tcp:localhost:9544; it connects
 after --wait seconds (default 10). BUMBLE_<PROFILE>_PASS means the Bumble side
-completed; whether the firmware received the data is in its own log
-(docs/internal/BLE.md, § Classic BT Peer). BUMBLE_DEBUG=1 logs the protocols.
+completed; whether the firmware received the data is in its own log.
+BUMBLE_DEBUG=1 logs the protocols.
 
 Bumble's virtual controller covers far less of BR/EDR than Bluedroid uses; the
 Controller patches below fill each gap and say why.
