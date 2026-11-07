@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build test_apps/smoke for each chip and run it in esp-emu.
 #
-# A standalone counterpart of tests/test_app_smoke.rs for places without the
+# A standalone counterpart of tests/idf/test_app_smoke.rs for places without the
 # Rust harness (the public release mirror runs it against every published
 # esp-emu binary with the ESP-IDF master docker image). Pass = the app's
 # final `RESULT_SUMMARY:` line reports failed=0.

@@ -357,7 +357,7 @@ fail:
  * GPIO 4 is taken by LEDC/PCNT above and 8-19 collides with S31's EMAC. */
 #define I2C_TEST_SDA 3
 #define I2C_TEST_SCL 7
-/* The emulator's built-in 24Cxx-style test slave (periph/i2c.rs). */
+/* The emulator's built-in 24Cxx-style test slave (periph/serial/i2c.rs). */
 #define I2C_TEST_ADDR 0x50
 
 /* Drive the real `i2c_master` driver against the built-in slave: probe finds
@@ -446,7 +446,7 @@ fail:
 /* Initialise SPI2 on the chip's default SPI pinout. Those pins are the ones
  * spi_periph_signal[].*_iomux_pin names, so the driver skips the GPIO matrix
  * and programs the pads' MCU_SEL instead. The emulator has to resolve a pad
- * through the IO MUX to see this bus at all -- tests/io_mux_firmware.rs reads
+ * through the IO MUX to see this bus at all -- tests/idf/io_mux_firmware.rs reads
  * the pads back after this case runs, which is why the bus is left up. */
 bool test_spi_iomux(void)
 {

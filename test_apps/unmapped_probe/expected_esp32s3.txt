@@ -14,7 +14,7 @@
 #
 # Silicon run: M5Stack CoreS3, ESP32-S3 (QFN56) rev v0.2, ROM esp32s3-20210327,
 # IDF v5.5, 2026-10-05. Its TLB dump after IDF start-up was
-# dtlb_ca = F,0,1,2,F,F,F,F (regions 0-7), the attributes tests/xtensa_unmapped.rs
+# dtlb_ca = F,0,1,2,F,F,F,F (regions 0-7), the attributes tests/cpu/xtensa_unmapped.rs
 # replays with.
 #
 # What the rows show:

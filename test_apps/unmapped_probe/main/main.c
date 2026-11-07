@@ -7,8 +7,8 @@
  * reboot runs the next one. The last boot prints the whole table as
  *   PROBE:<n> <op> <addr> ok=<value>   or   PROBE:<n> <op> <addr> exc=<cause> vaddr=<addr>
  * followed by PROBE:done. `expected_esp32s3.txt` beside this app is the table
- * those lines are checked against — by tests/xtensa_unmapped_probe.rs (this
- * app, booted in the emulator) and tests/xtensa_unmapped.rs (the same accesses
+ * those lines are checked against — by tests/idf/xtensa_unmapped_probe.rs (this
+ * app, booted in the emulator) and tests/cpu/xtensa_unmapped.rs (the same accesses
  * as single instructions). Its `source` column marks the rows a real ESP32-S3
  * printed that the emulator does not model yet.
  *

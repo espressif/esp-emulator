@@ -1,0 +1,5 @@
+# Boot logs stay on UART0; the app moves stdio to the TinyUSB CDC-ACM port on
+# the USB-OTG HS controller, the way ESP-Mosaico's usb_hs_console does.
+CONFIG_TINYUSB_CDC_ENABLED=y
+CONFIG_TINYUSB_CDC_COUNT=1
+CONFIG_TINYUSB_MODE_DMA=y
