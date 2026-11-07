@@ -1,0 +1,27 @@
+# WebSocket relay for TCP and UDP, for the browser build. Its own workspace (the empty
+# [workspace] table), so it builds for targets the emulator does not support.
+[workspace]
+
+[package]
+name = "esp-emu-relay"
+# Its own release: tag relay-vX.Y.Z, archives esp-emu-relay-X.Y.Z-TARGET. The page and the
+# installers name this version; a page accepts any relay of the MAJOR it was built against.
+version = "1.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+sha1 = { version = "0.10", default-features = false }
+# ring, not aws-lc-rs: it cross-compiles with a plain C compiler and no CMake
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+
+[dev-dependencies]
+tungstenite = "0.26"
+rcgen = "0.14"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

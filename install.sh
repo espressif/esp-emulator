@@ -8,6 +8,7 @@
 #   curl -fsSL https://.../install.sh | sh -s -- --version 0.30.0
 #   curl -fsSL https://.../install.sh | sh -s -- --bin-dir ~/bin
 #   curl -fsSL https://.../install.sh | sh -s -- --check
+#   curl -fsSL https://.../install.sh | sh -s -- --relay
 #
 # Or save and run:
 #   curl -fsSLO https://.../install.sh && sh install.sh [opts]
@@ -15,6 +16,9 @@
 # Drops the esp-emu binary at $HOME/.local/bin/esp-emu by default. The tarball
 # contains only the binary; docs and helper scripts live alongside install.sh
 # in the public release mirror at github.com/espressif/esp-emulator.
+# --relay installs esp-emu-relay (the browser build's network relay) instead,
+# from its own release (tag relay-vX.Y.Z); install-relay.ps1 is its Windows
+# counterpart.
 #
 # Requires: curl, tar, sha256sum (or shasum -a 256). No JSON parser needed —
 # the latest version is resolved via GitHub's /releases/latest → /releases/tag/vX
@@ -32,6 +36,10 @@ DL_BASE="${ESP_EMU_DL_BASE:-https://github.com}"
 VERSION=""
 CHECK_ONLY=false
 FORCE=false
+NAME="esp-emu"
+# The relay release --relay installs: scripts/relay-version.sh --check holds it
+# to esp-emu-relay/Cargo.toml. --version picks another.
+RELAY_VERSION="1.0.0"
 QUIET=false
 
 usage() {
@@ -41,7 +49,9 @@ Usage: install.sh [OPTIONS]
 Install or update esp-emu (RISC-V emulator for ESP32-C3/C6/P4/S31).
 
 Options:
-  --version X.Y.Z     Install a specific version (default: latest GitHub release)
+  --relay             Install esp-emu-relay, the browser build's network relay
+  --version X.Y.Z     Install a specific version (default: latest GitHub release;
+                      the relay: $RELAY_VERSION)
   --bin-dir DIR       Install location for the binary (default: \$HOME/.local/bin)
   --repo OWNER/NAME   GitHub repository hosting the releases (default: $DEFAULT_REPO)
   --check             Print latest version and exit (no install)
@@ -67,6 +77,7 @@ while [ $# -gt 0 ]; do
         --bin-dir=*)      BIN_DIR="${1#*=}"; shift ;;
         --repo)           REPO="${2:?--repo needs an argument}"; shift 2 ;;
         --repo=*)         REPO="${1#*=}"; shift ;;
+        --relay)          NAME="esp-emu-relay"; shift ;;
         --check)          CHECK_ONLY=true; shift ;;
         --force)          FORCE=true; shift ;;
         --quiet)          QUIET=true; shift ;;
@@ -103,18 +114,23 @@ detect_platform() {
             case "$_arch" in
                 x86_64|amd64) printf '%s' 'x86_64-unknown-linux-gnu' ;;
                 arm64|aarch64) printf '%s' 'aarch64-unknown-linux-gnu' ;;
-                *) die "unsupported Linux arch: $_arch (only x86_64 and aarch64 have prebuilt binaries; build from source)" ;;
+                *) die "unsupported Linux arch: $_arch (binaries are published for x86_64 and aarch64 only)" ;;
             esac
             ;;
         Darwin)
             case "$_arch" in
                 arm64|aarch64) printf '%s' 'aarch64-apple-darwin' ;;
-                x86_64) die "macOS x86_64 prebuilt is not published. Build from source." ;;
+                # Only the relay is built for Intel Macs
+                x86_64)
+                    [ "$NAME" = esp-emu-relay ] || die "no macOS x86_64 binary is published; only Apple Silicon (arm64)"
+                    printf '%s' 'x86_64-apple-darwin'
+                    ;;
                 *) die "unsupported macOS arch: $_arch" ;;
             esac
             ;;
         MINGW*|MSYS*|CYGWIN*)
-            die "Windows is not supported by install.sh. Build from source under WSL or native Windows."
+            [ "$NAME" = esp-emu-relay ] && die "on Windows, install the relay from PowerShell: irm https://raw.githubusercontent.com/$REPO/main/install-relay.ps1 | iex"
+            die "Windows is not supported by install.sh; use the Linux binary under WSL."
             ;;
         *) die "unsupported OS: $_os" ;;
     esac
@@ -164,17 +180,22 @@ PLATFORM="$(detect_platform)"
 say "Platform: $PLATFORM"
 say "Repository: $REPO"
 
-tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/esp-emu-install.XXXXXX")"
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/$NAME-install.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT INT TERM HUP
 
-if [ -z "$VERSION" ]; then
-    say "Resolving latest release via $DL_BASE/$REPO/releases/latest"
-    VERSION="$(resolve_latest_version)"
-    [ -n "$VERSION" ] || die "could not determine latest version"
+if [ "$NAME" = esp-emu-relay ]; then
+    # /releases/latest is the emulator's; the relay version is pinned above
+    [ -n "$VERSION" ] || VERSION="$RELAY_VERSION"
+    TAG="relay-v$VERSION"
+else
+    if [ -z "$VERSION" ]; then
+        say "Resolving latest release via $DL_BASE/$REPO/releases/latest"
+        VERSION="$(resolve_latest_version)"
+        [ -n "$VERSION" ] || die "could not determine latest version"
+    fi
+    TAG="v$VERSION"
 fi
-
-TAG="v$VERSION"
-ARCHIVE_NAME="esp-emu-${VERSION}-${PLATFORM}.tar.gz"
+ARCHIVE_NAME="${NAME}-${VERSION}-${PLATFORM}.tar.gz"
 URL="$DL_BASE/$REPO/releases/download/$TAG/$ARCHIVE_NAME"
 SHASUMS_URL="$DL_BASE/$REPO/releases/download/$TAG/SHA256SUMS"
 
@@ -187,20 +208,23 @@ if [ "$CHECK_ONLY" = true ]; then
 fi
 
 # Skip if already up-to-date.
-EXISTING_BIN="$BIN_DIR/esp-emu"
+EXISTING_BIN="$BIN_DIR/$NAME"
 if [ -x "$EXISTING_BIN" ] && [ "$FORCE" != true ]; then
     current="$("$EXISTING_BIN" --version 2>/dev/null | awk 'NR==1 {print $NF}' || true)"
     if [ -n "$current" ] && [ "$current" = "$VERSION" ]; then
-        ok "esp-emu $current already installed at $EXISTING_BIN (use --force to reinstall)"
+        ok "$NAME $current already installed at $EXISTING_BIN (use --force to reinstall)"
         exit 0
     fi
 fi
 
+FAIL_HINT=""
+[ "$NAME" = esp-emu-relay ] && FAIL_HINT=" (the relay releases: https://github.com/$REPO/releases?q=relay-v)"
+
 say "Downloading $ARCHIVE_NAME"
 if [ "$QUIET" = true ]; then
-    curl -fsSL "$URL" -o "$tmpdir/$ARCHIVE_NAME" || die "download failed: $URL"
+    curl -fsSL "$URL" -o "$tmpdir/$ARCHIVE_NAME" || die "download failed: $URL$FAIL_HINT"
 else
-    curl -fSL --progress-bar "$URL" -o "$tmpdir/$ARCHIVE_NAME" || die "download failed: $URL"
+    curl -fSL --progress-bar "$URL" -o "$tmpdir/$ARCHIVE_NAME" || die "download failed: $URL$FAIL_HINT"
 fi
 
 # Pull SHA256SUMS — soft-fail with a warning if absent (older releases may not have one).
@@ -219,32 +243,32 @@ fi
 say "Extracting"
 tar -xzf "$tmpdir/$ARCHIVE_NAME" -C "$tmpdir"
 
-# Locate esp-emu inside the extracted tree. Modern (binary-only) layout is
-# esp-emu-<ver>-<plat>/esp-emu; legacy archives stash it deeper, so fall back
+# Locate the binary inside the extracted tree. Modern (binary-only) layout is
+# <name>-<ver>-<plat>/<name>; legacy archives stash it deeper, so fall back
 # to a `find` for safety.
 SRC_BIN=""
 for cand in \
-    "$tmpdir/esp-emu-${VERSION}-${PLATFORM}/esp-emu" \
-    "$tmpdir/esp-emu"; do
+    "$tmpdir/${NAME}-${VERSION}-${PLATFORM}/$NAME" \
+    "$tmpdir/$NAME"; do
     if [ -f "$cand" ]; then
         SRC_BIN="$cand"
         break
     fi
 done
 if [ -z "$SRC_BIN" ]; then
-    SRC_BIN="$(find "$tmpdir" -type f -name esp-emu -not -path "*/tools/*" | head -1 || true)"
+    SRC_BIN="$(find "$tmpdir" -type f -name "$NAME" -not -path "*/tools/*" | head -1 || true)"
 fi
-[ -n "$SRC_BIN" ] && [ -f "$SRC_BIN" ] || die "esp-emu binary not found inside archive"
+[ -n "$SRC_BIN" ] && [ -f "$SRC_BIN" ] || die "$NAME binary not found inside archive"
 
 mkdir -p "$BIN_DIR"
 
 # Atomic install via .new + rename to dodge ETXTBSY on Linux.
-NEW_BIN="$BIN_DIR/esp-emu.new"
+NEW_BIN="$BIN_DIR/$NAME.new"
 cp "$SRC_BIN" "$NEW_BIN"
 chmod +x "$NEW_BIN"
-mv "$NEW_BIN" "$BIN_DIR/esp-emu"
+mv "$NEW_BIN" "$BIN_DIR/$NAME"
 
-ok "Installed esp-emu $VERSION to $BIN_DIR/esp-emu"
+ok "Installed $NAME $VERSION to $BIN_DIR/$NAME"
 
 if [ "$QUIET" != true ]; then
     printf '\n'
@@ -256,6 +280,10 @@ if [ "$QUIET" != true ]; then
             printf '    %bexport PATH="%s:$PATH"%b\n\n' "$_bld" "$BIN_DIR" "$_rst"
             ;;
     esac
-    printf 'Run: %b%s/esp-emu --help%b\n' "$_bld" "$BIN_DIR" "$_rst"
+    if [ "$NAME" = esp-emu-relay ]; then
+        printf 'Run: %b%s/esp-emu-relay%b, then connect from the Network panel of the browser emulator\n' "$_bld" "$BIN_DIR" "$_rst"
+    else
+        printf 'Run: %b%s/esp-emu --help%b\n' "$_bld" "$BIN_DIR" "$_rst"
+    fi
     printf 'Docs and helper scripts: https://github.com/%s\n' "$REPO"
 fi
