@@ -120,14 +120,14 @@ ratio of 1.50.
 
 ## Smoke harness (opt-in)
 
-`tests/http_throughput_smoke.rs` automates the whole flow — builds the firmware
+`tests/idf/http_throughput_smoke.rs` automates the whole flow — builds the firmware
 per chip, serves the payload from an in-process HTTP server (no `http_server.py`
 needed; it's the Rust equivalent), boots each binary, and asserts the full
 payload was downloaded. It is **opt-in**: plain `cargo test` skips it. Run it
 explicitly with:
 
 ```sh
-ESP_EMU_RUN_HTTP_TPUT=1 cargo test --release --test http_throughput_smoke -- --nocapture
+ESP_EMU_RUN_HTTP_TPUT=1 cargo test --release --test idf http_throughput_smoke -- --nocapture
 ```
 
 Knobs: `ESP_EMU_IDF_CHIPS=esp32c3,esp32c5,esp32p4` (chip set),
@@ -135,9 +135,34 @@ Knobs: `ESP_EMU_IDF_CHIPS=esp32c3,esp32c5,esp32p4` (chip set),
 completeness only and prints the emulated-time `mbit_s` for the record — it does
 not gate on a throughput threshold (wall-clock would flake under host load).
 
+## Browser comparison
+
+`browser_compare.sh` compares native `--net user` with the browser build
+through `esp-emu-relay`, on the same firmware and the same computer:
+
+```sh
+. $IDF_PATH/export.sh                 # only for the first firmware build of a chip
+./browser_compare.sh                  # esp32c3, 10 MiB, 2 runs of each path
+./browser_compare.sh --chip esp32p4 --mb 20 --runs 3
+```
+
+The script installs Playwright and `wasm-pack` when they are missing, builds
+`www/pkg`, the emulator and the relay with the release codegen, and builds the
+firmware through the smoke harness when there is none for the chip. Then it
+serves the payload, starts the relay with `--allow-private`, and runs the two
+paths in turn in headless Chromium. Each run prints its emulated-time and
+wall-clock throughput, and the last lines are a Markdown table. The output is
+also kept in `target/http-throughput/`. `--help` lists the options;
+`--cpuprofile FILE` writes a CPU profile of the browser worker for the
+DevTools Performance panel.
+
+Wall clock is the number to compare: emulated-time throughput is the same on
+both paths, because the firmware never waits for the network.
+
 ## Files
 
 - `main/http_throughput_main.c` — firmware: link bring-up + HTTP download + measurement.
 - `http_server.py` — threaded host HTTP server streaming a fixed-size payload (for CLI runs).
 - `sdkconfig.defaults` — large-app partition + enlarged lwIP TCP windows.
-- `../tests/http_throughput_smoke.rs` — opt-in Rust smoke harness (see above).
+- `../tests/idf/http_throughput_smoke.rs` — opt-in Rust smoke harness (see above).
+- `browser_compare.sh` and `../../tests/browser/http-throughput.mjs` — native against browser comparison (see above).

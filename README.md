@@ -52,7 +52,7 @@ cp esp-emu-<version>-<platform>/esp-emu ~/.local/bin/
 
 ## Try it in your browser
 
-The browser build is published to GitHub Pages on every release: **<https://espressif.github.io/esp-emulator/>**. Pick a chip, drop a merged flash image (`.bin`) on the page and press Run. The emulator runs entirely in your tab, the firmware never leaves your machine, and a live dashboard shows the console, instruction rate, cores, GPIO pads, registers and memory. Networking is not available from the hosted page (it needs a proxy on your machine, see [`BROWSER.md`](docs/guides/BROWSER.md)); use the native binary for that.
+The browser build is published to GitHub Pages on every release: **<https://espressif.github.io/esp-emulator/>**. Pick a chip, drop a merged flash image (`.bin`) on the page and press Run. The emulator runs entirely in your tab, the firmware never leaves your machine, and a live dashboard shows the console, instruction rate, cores, GPIO pads, registers and memory. For networking, the page's **Network** panel connects to `esp-emu-relay`, a small relay that runs on your machine (Linux, macOS or Windows); install it with `curl -fsSL https://raw.githubusercontent.com/espressif/esp-emulator/main/install.sh | sh -s -- --relay`, or on Windows `irm https://raw.githubusercontent.com/espressif/esp-emulator/main/install-relay.ps1 | iex`, and see [`BROWSER.md`](docs/guides/BROWSER.md).
 
 ## Quick Start
 
@@ -106,7 +106,7 @@ Every flag, with the settings behind flash size, PSRAM size, I2C devices and chi
 
 ## Features
 
-- **CPU**: Full RV32IMAC on C3/C5/C6/H2; RV32IMAFC (with single-precision FP via Berkeley SoftFloat) on P4; Xtensa LX7 (dual-core, windowed registers, zero-overhead loops, MAC16, FPU) on S3. Multi-hart scheduler supports P4's dual HP cores. RV32 PMP and Espressif PMA enforced via a fused two-level page table — catches the same access violations as silicon (IDF panic memprot tests, TEE REE-vs-TEE isolation, IRAM/IROM write protection). P4 and S31 run the whole PIE SIMD instruction set that ESP-SR, esp-dl and esp-nn use, checked bit for bit against silicon.
+- **CPU**: RV32IMC on C3; full RV32IMAC on C5/C6/H2; RV32IMAFC (with single-precision FP via Berkeley SoftFloat) on P4; Xtensa LX7 (dual-core, windowed registers, zero-overhead loops, MAC16, FPU) on S3. Multi-hart scheduler supports P4's dual HP cores. RV32 PMP and Espressif PMA enforced via a fused two-level page table — catches the same access violations as silicon (IDF panic memprot tests, TEE REE-vs-TEE isolation, IRAM/IROM write protection). P4 and S31 run the whole PIE SIMD instruction set that ESP-SR, esp-dl and esp-nn use, checked bit for bit against silicon.
 - **Access permission control**: the APM and TEE permission controllers (C5, C6, H2, S31), P4's PMS and the `SENSITIVE` PMS monitors on C3 and S3 are enforced for the CPU and DMA, so ESP-TEE, IDF's memprot app and other isolation firmware see the same faults and violation reports as silicon
 - **WiFi**: Soft AP with WPA2-PSK, WPA3-SAE (PMF, H2E, transition mode) and WPA2/WPA3-Enterprise (802.1X relayed to a RADIUS server), 802.11 management frames, DHCP server, and TAP networking for real connectivity
 - **Ethernet**: OpenCores Ethernet MAC (OpenETH) for QEMU-compatible `CONFIG_ETH_USE_OPENETH` firmware, plus Synopsys DesignWare GMAC for ESP32-P4's built-in EMAC
@@ -114,10 +114,12 @@ Every flag, with the settings behind flash size, PSRAM size, I2C devices and chi
 - **BLE**: NimBLE host stack on every BLE chip, plus Bluedroid on ESP32-S31, with HCI forwarding to Bumble (virtual controller) or physical Linux HCI adapters
 - **Thread / 802.15.4**: OpenThread `ot_cli` and `ot_br` on ESP32-C6 and ESP32-H2. Single-node forms a partition out of the box; two emulator instances form one Thread mesh (Leader + Child, or Border Router + end device) over a localhost UDP bridge
 - **Crypto**: AES (ECB/CBC/OFB/CTR/CFB), SHA (1/224/256), RSA, ECC, HMAC-SHA256, Digital Signature, XTS-AES flash encryption, ECDSA (P-256/P-384 on P4 and C5; P-256 on H2), Key Manager + HUK Generator (P4, C5) — drives flash / HMAC / DS / ECDSA key sourcing for `CONFIG_SECURE_FLASH_ENCRYPTION_KEY_SOURCE_KEY_MGR`
-- **Peripherals**: UART, USB Serial JTAG, GPIO, system timer, timer groups, interrupt controllers (PLIC for C3/C6/H2, CLIC for C5/P4), eFuse, SPI flash, GDMA, GP-SPI, RMT, LEDC, PCNT, MCPWM, I2C (with a built-in EEPROM slave), and the TIMG/RTC watchdogs
+- **Peripherals**: UART, USB Serial JTAG, USB-OTG on S3 (FS), P4 (HS + FS) and S31 (HS) (DWC2 device mode, enumerated by a built-in virtual host; a TinyUSB CDC-ACM port works as the console), GPIO, system timer, timer groups, interrupt controllers (PLIC for C3/C6/H2, CLIC for C5/P4), eFuse, SPI flash, GDMA, GP-SPI, RMT, LEDC, PCNT, MCPWM, I2C (with a built-in EEPROM slave), ADC (C3/C5/C6/H2), and the TIMG/RTC watchdogs
+- **LP core and sleep (ESP32-C6)**: IDF `ulp_lp_core` firmware runs on the emulated low-power RISC-V core next to the HP core — started through the PMU or its LP timer, HP↔LP software interrupts, shared LP RAM, `lp_core_printf` over the LP UART on the console. The HP core's deep sleep and light sleep work with the RTC timer and the LP core as wake sources, and the LP core runs on while the HP core sleeps. LP IO/I2C and GPIO/UART wake-ups are not modelled yet
 - **esptool / espefuse over `socket://`**: a `--uart-tcp HOST:PORT` bridge plus `--strap-mode 0x02` (UART download) lets esptool, espefuse, and `idf.py flash` drive the running emulator over TCP, matching the QEMU-Espressif workflow. See [esptool / espefuse](docs/guides/FLASHING.md).
 - **Chips**: ESP32-C3, ESP32-C5, ESP32-C6, ESP32-H2, ESP32-P4, and ESP32-S3 (dual-core Xtensa; boots the real mask ROM through the IDF bootloader to app_main; 2.4 GHz WiFi station and BLE both work against the built-in controllers; external PSRAM works in both quad and octal mode, `CONFIG_SPIRAM=y`) with per-chip memory maps and interrupt controllers. C5 is a hybrid: a C6-shaped peripheral map driven by a P4-style CLIC on a single core (2.4 GHz WiFi and BLE both work; 5 GHz and 802.15.4 are not modelled). (ESP32-S31 is in early bring-up)
 - **Debugging**: `--gdb PORT` serves a GDB remote stub (QEMU `-s -S` equivalent) for `riscv32-esp-elf-gdb` / `xtensa-esp32s3-elf-gdb`; `--trace FILE` records a per-task timeline for Perfetto with no guest instrumentation. See [Execution Tracing and Profiling](docs/guides/HOST-INTERFACES.md#execution-tracing-and-profiling).
+- **Virtual parts**: add virtual components to the emulated chip, such as a push button on a GPIO, an SHT31 sensor on I2C or a TMP123 sensor on SPI. They run in the browser build or inside the emulator itself (`--cosim-board`), and the firmware drives them with its stock drivers. [docs/guides/PARTS.md](docs/guides/PARTS.md) runs the examples and walks through writing your own; [`examples/parts/pushbutton`](examples/parts/pushbutton) is a complete part to copy, [`examples/parts/sht31`](examples/parts/sht31) an I2C one and [`examples/parts/tmp123`](examples/parts/tmp123) an SPI one
 - **WASM**: Browser-based emulation via WebAssembly with JavaScript API
 - **ROM stubs**: Intercepts key ROM functions (printf, UART, delay, WiFi TX) instead of emulating full ROM
 
@@ -135,6 +137,7 @@ User guides live at [`docs/guides/`](docs/guides/) and track the latest release:
 - [`HOSTED.md`](docs/guides/HOSTED.md) — ESP-Hosted P4 ↔ C6 SDIO setup
 - [`RAINMAKER.md`](docs/guides/RAINMAKER.md) — RainMaker provisioning flow
 - [`BROWSER.md`](docs/guides/BROWSER.md) — running the WASM build in a browser (hosted at <https://espressif.github.io/esp-emulator/>)
+- [`PARTS.md`](docs/guides/PARTS.md) — virtual parts: run firmware next to a virtual button or sensor, in the browser or the command-line emulator, and write a part of your own
 
 ## Tests
 
@@ -158,9 +161,12 @@ Binary tarballs (single-file artifacts containing only the `esp-emu` executable)
 - `esp-emu-<version>-aarch64-unknown-linux-gnu.tar.gz` — Linux arm64 native
 - `esp-emu-<version>-aarch64-apple-darwin.tar.gz` — macOS Apple Silicon native
 - `esp-emu-<version>-wasm.tar.gz` — browser WebAssembly bundle
+- `esp-emu-<version>-examples.tar.gz` — the examples kit: the button, sensor and thermometer boards, each with its part and ESP32-C3 firmware ready to run ([`PARTS.md`](docs/guides/PARTS.md))
 - `SHA256SUMS` — sha256 for each tarball; verified automatically by `install.sh`
 
 Per-version release notes are the body of each [GitHub release](https://github.com/espressif/esp-emulator/releases).
+
+`esp-emu-relay`, the browser build's network relay, has its own release, `relay-v<version>`, with `esp-emu-relay-<version>-<target>.tar.gz` for Linux (x86_64, arm64) and macOS (Intel, Apple Silicon) and a `.zip` for Windows x86_64. Any relay of the same major version works with a page; the source is in [`esp-emu-relay/`](esp-emu-relay/).
 
 ## Helper tools
 
