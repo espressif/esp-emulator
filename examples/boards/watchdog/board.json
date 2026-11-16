@@ -1,0 +1,3 @@
+{ "parts": {
+    "wdt": { "module": "watchdog.wasm", "pins": { "WDI": 4, "RESET": "EN" } }
+} }

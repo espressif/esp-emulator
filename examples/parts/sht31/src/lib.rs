@@ -256,7 +256,7 @@ mod tests {
     /// and strapped to `addr`.
     fn wired(addr: u32) -> Sht31 {
         let mut sensor = Sht31::default();
-        sensor.configure(&PartConfig { pins: [(SCL.to_string(), 6), (SDA.to_string(), 5)].into(), addr });
+        sensor.configure(&PartConfig { pins: [(SCL.to_string(), 6), (SDA.to_string(), 5)].into(), addr, ..Default::default() });
         sensor
     }
 

@@ -46,7 +46,7 @@ pub mod proto {
 
 pub use proto::{
     bus_request, claim, emulator_message::Payload, AnalogClaim, AnalogDrive, BusOp, BusReply, BusRequest,
-    Claim, EmulatorMessage, GpioClaim, GpioDrive, I2cClaim, I2cTransaction, PartConfig, PartState,
+    Claim, EmulatorMessage, EnClaim, EnDrive, GpioClaim, GpioDrive, I2cClaim, I2cTransaction, PartConfig, PartState,
     PwmState, Register, SpiClaim, SpiTransfer, UartClaim, UartRx, UartTx,
 };
 
@@ -56,7 +56,9 @@ pub mod prelude {
         bus_request, claim, BusOp, BusReply, BusRequest, Claim, EmulatorMessage, GpioClaim, GpioDrive,
         I2cClaim, I2cTransaction, PartConfig, PwmState, Register, SpiClaim, SpiTransfer, UartClaim,
     };
-    pub use crate::{analog, drive, drives, hold, reads_pwm, serial, set_value, transmit, watches, Device, State};
+    pub use crate::{
+        analog, drive, drive_en, drives, en, hold, reads_pwm, serial, set_value, transmit, watches, Device, State,
+    };
 }
 
 /// The claim to drive `pins` (bit N for GPIO N): the emulator refuses them
@@ -95,6 +97,14 @@ pub fn analog(pin: u32) -> Claim {
     Claim { what: Some(claim::What::Analog(AnalogClaim { pin })) }
 }
 
+/// The claim to be wired to the chip's EN (CHIP_PU) pin, its reset input:
+/// what a supervisor, a watchdog or a reset button claims when the board
+/// names one of its pins in `PartConfig::en_pins`. Not exclusive; the line is
+/// low while any part holds it low ([`drive_en`]).
+pub fn en() -> Claim {
+    Claim { what: Some(claim::What::En(EnClaim {})) }
+}
+
 /// The component a part models. Each method is one call of
 /// `proto/PART_ABI.md`, with the bytes already decoded; the ones a device
 /// has no use for are left at their defaults.
@@ -112,9 +122,10 @@ pub trait Device: Default {
 
     /// Whether the device takes one-way messages, `part_on_message`, as
     /// [`ON_BUS`](Self::ON_BUS) is for `part_on_bus`: `true` on a device that
-    /// claims a serial line ([`serial`]) or reads a pin as PWM
-    /// ([`reads_pwm`]) and implements the method for it,
-    /// [`on_uart`](Self::on_uart) or [`on_pwm`](Self::on_pwm). Left `false`,
+    /// claims a serial line ([`serial`]), reads a pin as PWM ([`reads_pwm`])
+    /// or follows the chip's EN pin, and implements the method for it:
+    /// [`on_uart`](Self::on_uart), [`on_pwm`](Self::on_pwm) or
+    /// [`on_en`](Self::on_en). Left `false`,
     /// `part_on_message` decodes nothing, which keeps the message decoder out
     /// of a part that is sent no messages.
     const ON_MESSAGE: bool = false;
@@ -169,6 +180,11 @@ pub trait Device: Default {
     /// it: nothing is said again while it stays.
     fn on_pwm(&mut self, _state: &PwmState) {}
 
+    /// The chip's EN pin moved, whoever moved it: `false` and the chip is
+    /// held in reset from `at_ns`, `true` and the last holder let go, the
+    /// chip reset following. A part that pulls EN sees its own pulse here.
+    fn on_en(&mut self, _level: bool, _at_ns: u64) {}
+
     /// Somebody interacted with the part: `"press"`, `"warmer"`,
     /// `"set:temperature=30.5"` ([`set_value`]). The names are the part's
     /// own; one it does not have is ignored. Not told the time: a device
@@ -209,6 +225,15 @@ impl State {
 /// it. Stamped with the time `poll` was given, it lands now.
 pub fn drive(pin: u32, level: bool, at_ns: u64) -> EmulatorMessage {
     EmulatorMessage { sim_time_ns: at_ns, payload: Some(Payload::GpioDrive(GpioDrive { pin, level })) }
+}
+
+/// An `EnDrive` at `at_ns`, as [`Device::poll`] returns it: `false` pulls
+/// the chip's EN pin low and holds the chip in reset while emulated time goes
+/// on, `true` lets go, and the chip then boots as from power-on. Needs the
+/// [`en`] claim. Both ends of a reset pulse may be returned ahead of time,
+/// from two polls: the release stays queued while the chip is held.
+pub fn drive_en(level: bool, at_ns: u64) -> EmulatorMessage {
+    EmulatorMessage { sim_time_ns: at_ns, payload: Some(Payload::EnDrive(EnDrive { level })) }
 }
 
 /// The voltage on analog pad `pin`, in millivolts, from `at_ns`, as
@@ -315,6 +340,7 @@ impl<D: Device, const N: usize> Part<D, N> {
         match msg.payload {
             Some(Payload::UartTx(tx)) => self.device.on_uart(&tx.data),
             Some(Payload::PwmState(state)) => self.device.on_pwm(&state),
+            Some(Payload::EnLevel(e)) => self.device.on_en(e.level, msg.sim_time_ns),
             _ => {}
         }
     }
@@ -470,7 +496,7 @@ mod tests {
 
     fn part() -> Part<Button, 64> {
         let mut part = Part::<Button, 64>::default();
-        let cfg = PartConfig { pins: [("A".to_string(), 9)].into(), addr: 0 }.encode_to_vec();
+        let cfg = PartConfig { pins: [("A".to_string(), 9)].into(), ..Default::default() }.encode_to_vec();
         part.buffer[..cfg.len()].copy_from_slice(&cfg);
         part.configure(cfg.len() as i32);
         part
@@ -645,6 +671,48 @@ mod tests {
         part.buffer[..w.len()].copy_from_slice(&w);
         part.on_message(w.len() as i32);
         assert_eq!(part.poll(8), 0);
+    }
+
+    #[test]
+    fn a_part_on_en_claims_it_drives_it_and_is_told_when_it_moves() {
+        #[derive(Default)]
+        struct Supervisor {
+            wired: bool,
+            seen: Vec<(bool, u64)>,
+        }
+        impl Device for Supervisor {
+            const NAME: &'static str = "supervisor";
+            const ON_MESSAGE: bool = true;
+            fn configure(&mut self, config: &PartConfig) {
+                self.wired = config.en_pins.iter().any(|p| p == "RESET");
+            }
+            fn claims(&self) -> Vec<Claim> {
+                if self.wired { vec![en()] } else { vec![] }
+            }
+            fn on_en(&mut self, level: bool, at_ns: u64) {
+                self.seen.push((level, at_ns));
+            }
+            fn poll(&mut self, now_ns: u64) -> Option<EmulatorMessage> {
+                Some(drive_en(false, now_ns))
+            }
+        }
+        let mut part = Part::<Supervisor, 64>::default();
+        let cfg = PartConfig { en_pins: vec!["RESET".into()], ..Default::default() }.encode_to_vec();
+        part.buffer[..cfg.len()].copy_from_slice(&cfg);
+        part.configure(cfg.len() as i32);
+        let len = part.register() as usize;
+        let reg = Register::decode(&part.buffer[..len]).unwrap();
+        assert!(matches!(reg.claims[..], [Claim { what: Some(claim::What::En(_)) }]));
+
+        let len = part.poll(7) as usize;
+        let said = EmulatorMessage::decode(&part.buffer[..len]).unwrap();
+        assert_eq!((said.sim_time_ns, said.payload), (7, Some(Payload::EnDrive(EnDrive { level: false }))));
+
+        let told = EmulatorMessage { sim_time_ns: 9, payload: Some(Payload::EnLevel(crate::proto::EnLevel { level: false })) }
+            .encode_to_vec();
+        part.buffer[..told.len()].copy_from_slice(&told);
+        part.on_message(told.len() as i32);
+        assert_eq!(part.device.seen, [(false, 9)]);
     }
 
     #[test]

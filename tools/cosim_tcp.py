@@ -106,6 +106,16 @@ def dvp_claim(pclk_pin, vsync_pin, data_pins, de_pin=None, hsync_pin=None, xclk_
     return ld(18, c)                                                 # Claim.dvp
 
 
+def dsi_claim(virtual_channel=0):
+    """The panel on a virtual channel of the MIPI-DSI link."""
+    return ld(20, field(1, varint(virtual_channel)))                 # Claim.dsi
+
+
+def en_claim():
+    """Wired to the chip's EN (CHIP_PU) pin: may pull it low with en_drive."""
+    return ld(19, b"")                                               # Claim.en
+
+
 def register(name, *claims):
     """One consumer with its claims; a board of devices is one consumer."""
     reg = field(1, varint(1)) + ld(2, name.encode()) + b"".join(ld(3, c) for c in claims)
@@ -115,6 +125,21 @@ def register(name, *claims):
 def gpio_drive(at_ns, pin, level):
     g = field(1, varint(pin)) + field(2, varint(int(level)))
     return field(1, varint(at_ns)) + ld(6, g)                        # sim_time_ns, gpio_drive
+
+
+def en_drive(at_ns, level):
+    """EN at `at_ns`: False holds the chip in reset while emulated time goes
+    on, True lets go and the chip boots as from power-on. Needs en_claim."""
+    e = field(1, varint(1)) if level else b""
+    return field(1, varint(at_ns)) + ld(34, e)                       # sim_time_ns, en_drive
+
+
+def en_level(payload):
+    """`(at_ns, level)` of an EnLevel broadcast (topic SIM/EN), else None."""
+    msg = decode(payload)
+    if 35 not in msg:
+        return None
+    return msg.get(1, 0), bool(decode(msg[35]).get(1, 0))
 
 
 def bus_reply(correlation_id, data, ack=True, op=2):
@@ -223,10 +248,35 @@ def cam_frame(pieces, due_ns=0, session=0):
     return pieces[:-1] + [stamp + ld(33, pieces[-1] + field(6, varint(session)))]
 
 
+def dsi_event(payload):
+    """What a frame's DsiEvent carries, or None when it is not one:
+    ("command", dt, data), ("format", streaming, width, height, format) or
+    ("rows", frame, y, rows, pixels)."""
+    e = decode(payload).get(36)                                      # EmulatorMessage.dsi_event
+    if e is None:
+        return None
+    e = decode(e)
+    if 1 in e:
+        c = decode(e[1])
+        return "command", c.get(1, 0), c.get(2, b"")
+    if 2 in e:
+        f = decode(e[2])
+        return "format", bool(f.get(1, 0)), f.get(2, 0), f.get(3, 0), f.get(4, 0)
+    if 3 in e:
+        r = decode(e[3])
+        return "rows", r.get(1, 0), r.get(2, 0), r.get(3, 0), r.get(4, b"")
+    return None
+
+
 def accepted(ack):
     """Whether a RegisterAck took the registration, and its reason if not."""
     a = decode(decode(ack or b"").get(5, b""))
     return bool(a.get(5, 0)), a.get(6, b"").decode(errors="replace")
+
+
+def en_low(ack):
+    """Whether a RegisterAck says the chip's EN pin is low at attach."""
+    return bool(decode(decode(ack or b"").get(5, b"")).get(8, 0))
 
 
 # ---------------------------------------------------------------- the socket

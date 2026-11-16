@@ -5,7 +5,7 @@
  */
 
 /*
- * NVS, partition table, SPI flash and flash mmap.
+ * NVS, partition table, SPI flash, flash mmap and the SD card.
  */
 #include "test_smoke.h"
 
@@ -213,4 +213,115 @@ bool test_mmap(void)
 
     esp_partition_munmap(mmap_handle);
     return true;
+}
+
+/* --------------- SD card --------------- */
+
+/* The chip select of a card on SPI2, on the chips with no SDMMC host: a pad
+ * no other case uses, and the one the emulator is told (`--sd FILE,cs=3`). */
+#define SD_SPI_CS_GPIO 3
+#define SD_TEST_SECTOR 64
+/* On the SDMMC host, more than the driver's DMA descriptor ring holds
+ * (16 KiB), so the transfer goes on after a refill. */
+#if SOC_SDMMC_HOST_SUPPORTED
+#define SD_TEST_SECTORS 64
+#else
+#define SD_TEST_SECTORS 4
+#endif
+
+/* Write a pattern to a few blocks of the card and read it back. */
+static bool sd_card_round_trip(const char *TN, sdmmc_card_t *card)
+{
+    const size_t len = SD_TEST_SECTORS * 512;
+    uint8_t *wr = heap_caps_malloc(len, MALLOC_CAP_DMA);
+    uint8_t *rd = heap_caps_calloc(1, len, MALLOC_CAP_DMA);
+    bool ok = false;
+    if (!wr || !rd) {
+        FAIL_MSG(TN, "no memory for %u bytes", (unsigned)len);
+        goto out;
+    }
+    for (size_t i = 0; i < len; i++) {
+        wr[i] = (uint8_t)(i * 7 + (i >> 9));
+    }
+    esp_err_t err = sdmmc_write_sectors(card, wr, SD_TEST_SECTOR, SD_TEST_SECTORS);
+    if (err != ESP_OK) { FAIL_MSG(TN, "write: %s", esp_err_to_name(err)); goto out; }
+    err = sdmmc_read_sectors(card, rd, SD_TEST_SECTOR, SD_TEST_SECTORS);
+    if (err != ESP_OK) { FAIL_MSG(TN, "read: %s", esp_err_to_name(err)); goto out; }
+    if (memcmp(wr, rd, len) != 0) { FAIL_MSG(TN, "read back differs"); goto out; }
+    /* The line the emulator's own suite looks for: a card was really there. */
+    ESP_LOGI(TAG, "  sd_card: %u blocks of %u read back", SD_TEST_SECTORS, (unsigned)card->csd.capacity);
+    ok = true;
+out:
+    free(wr);
+    free(rd);
+    return ok;
+}
+
+/* A card in the slot is optional: a board, or an emulator run without --sd,
+ * has none, and that is not this case's failure. */
+static bool sd_no_card(const char *TN, esp_err_t err)
+{
+    if (err == ESP_ERR_TIMEOUT || err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_RESPONSE) {
+        ESP_LOGI(TAG, "  sd_card: no card (%s), skipped", esp_err_to_name(err));
+        return true;
+    }
+    FAIL_MSG(TN, "card init: %s", esp_err_to_name(err));
+    return false;
+}
+
+bool test_sd_card(void)
+{
+    const char *TN = "sd_card";
+    sdmmc_card_t card;
+    bool ok;
+#if SOC_SDMMC_HOST_SUPPORTED
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot.width = 1;
+    host.flags &= ~(SDMMC_HOST_FLAG_4BIT | SDMMC_HOST_FLAG_8BIT);
+    esp_err_t err = sdmmc_host_init();
+    if (err != ESP_OK) { FAIL_MSG(TN, "host init: %s", esp_err_to_name(err)); return false; }
+    err = sdmmc_host_init_slot(host.slot, &slot);
+    if (err != ESP_OK) {
+        FAIL_MSG(TN, "slot init: %s", esp_err_to_name(err));
+        sdmmc_host_deinit();
+        return false;
+    }
+    err = sdmmc_card_init(&host, &card);
+    ok = (err == ESP_OK) ? sd_card_round_trip(TN, &card) : sd_no_card(TN, err);
+    sdmmc_host_deinit();
+#else
+    spi_bus_config_t bus = {
+        .sclk_io_num = SPI2_IOMUX_PIN_NUM_CLK,
+        .mosi_io_num = SPI2_IOMUX_PIN_NUM_MOSI,
+        .miso_io_num = SPI2_IOMUX_PIN_NUM_MISO,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 4096,
+    };
+    esp_err_t err = spi_bus_initialize(SPI2_HOST, &bus, SDSPI_DEFAULT_DMA);
+    if (err != ESP_OK) { FAIL_MSG(TN, "spi bus: %s", esp_err_to_name(err)); return false; }
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
+    dev.host_id = SPI2_HOST;
+    dev.gpio_cs = SD_SPI_CS_GPIO;
+    sdspi_dev_handle_t handle;
+    err = sdspi_host_init();
+    if (err == ESP_OK) {
+        err = sdspi_host_init_device(&dev, &handle);
+    }
+    if (err != ESP_OK) {
+        FAIL_MSG(TN, "sdspi init: %s", esp_err_to_name(err));
+        sdspi_host_deinit();
+        spi_bus_free(SPI2_HOST);
+        return false;
+    }
+    host.slot = handle;
+    err = sdmmc_card_init(&host, &card);
+    ok = (err == ESP_OK) ? sd_card_round_trip(TN, &card) : sd_no_card(TN, err);
+    sdspi_host_remove_device(handle);
+    sdspi_host_deinit();
+    spi_bus_free(SPI2_HOST);
+#endif
+    return ok;
 }

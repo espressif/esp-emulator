@@ -174,12 +174,28 @@ for chip in $CHIPS; do
         tail -20 "$dir/build.log"; continue
     fi
     ran=$((ran + 1))
+    # A blank 8 MiB SD card for the app's sd_card case, where this esp-emu
+    # has --sd: in the SDMMC host's slot on the chips with the host, else on
+    # SPI2 with the chip select the app drives (SD_SPI_CS_GPIO).
+    sd=()
+    if "$EMU" --help 2>/dev/null | grep -q -- '--sd '; then
+        truncate -s 8M "$dir/sd.img"
+        case "$chip" in
+            esp32p4|esp32s3|esp32s31) sd=(--sd "$dir/sd.img") ;;
+            *) sd=(--sd "$dir/sd.img,cs=3") ;;
+        esac
+    fi
     echo "=== $chip: running"
     "$EMU" --chip "$chip" --firmware "$dir/build/merged.bin" --elf "$dir/build/emu_test.elf" \
         --no-panic-intercept --timeout "${TIMEOUT}s" --exit-on 'RESULT_SUMMARY:' \
-        > "$dir/emu.log" 2>&1 || true
+        "${sd[@]}" > "$dir/emu.log" 2>&1 || true
     summary="$(grep -o 'RESULT_SUMMARY: .*' "$dir/emu.log" | tail -1 || true)"
-    if [[ "$summary" == *"failed=0"* ]]; then
+    # The sd_card case passes without a card, so with one it must say it
+    # used it.
+    if (( ${#sd[@]} )) && ! grep -q 'sd_card: .* read back' "$dir/emu.log"; then
+        RESULT[$chip]="FAIL (the sd_card case did not reach the card; see $dir/emu.log)"
+        fail_count=$((fail_count + 1))
+    elif [[ "$summary" == *"failed=0"* ]]; then
         RESULT[$chip]="PASS ($summary)"
         passed=$((passed + 1))
     else

@@ -37,6 +37,7 @@ esp_part::export_part!(Led);
 | `ON_BUS`, `on_bus(request)` | A transaction on the bus it claimed; the reply quotes the request's `correlation_id`. `ON_BUS = true` opts in, which keeps the decoder out of a part that has no bus. | an I2C or SPI device |
 | `ON_MESSAGE`, `on_uart(bytes)` | What the chip transmitted on the serial line it claimed (`serial(tx, rx)`, by the device's own TX and RX pins), in pieces. It answers from `poll` with `transmit(bytes, now)`; nothing waits on it. `ON_MESSAGE = true` opts in, which keeps the message decoder out of a part that is sent no messages. | a serial device |
 | `ON_MESSAGE`, `on_pwm(state)` | The waveform a PWM block puts on a pin it reads as PWM (`reads_pwm(pins)`): `period_ns` and `high_ns`, when they change. Period 0 is no waveform. `ON_MESSAGE = true` opts in, as for a serial device. | a servo, a buzzer, a dimmed LED, a motor driver |
+| `en()`, `drive_en(level, now)`, `on_en(level, at)` | The chip's EN pin, for a part the board wired to it (`config.en_pins` names the pin): the claim, the drive from `poll` (`false` holds the chip in reset while emulated time goes on, `true` lets it boot as from power-on; both ends of a pulse may be said ahead), and, with `ON_MESSAGE = true`, being told when EN moves, whoever moved it. | a watchdog, a supervisor, a reset button |
 | `on_input(name)` | Somebody interacted: `"press"`, `"warmer"`, `"set:temperature=30.5"` (`set_value` parses the last). | a part people act on |
 | `state()` | What it shows, as named values. | a part people look at |
 

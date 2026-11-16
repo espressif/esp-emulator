@@ -9,8 +9,10 @@ library: the ST7789 / ILI9341 command set, drawn into a PNG.
 Registers as the device on the panel's chip select and follows every transfer
 the firmware clocks at it. A command arrives in the controller's command phase
 (esp_lcd) or as a data byte with D/C low (a driver that bit-bangs D/C); pixels
-arrive with D/C high after RAMWR, into the window CASET and RASET set. The
-PNG is rewritten whenever a window has been filled, at most every --every
+arrive with D/C high after RAMWR, into the window CASET and RASET set. A QSPI
+panel (CO5300, SH8601, ST77916) has no D/C line: leave --dc out, and each
+chip-select frame opens with the opcode word (0x02 or 0x32, 0, command, 0).
+The PNG is rewritten whenever a window has been filled, at most every --every
 seconds, and once more when the emulator leaves:
 
     esp-emu --chip esp32s3 --firmware build/merged_flash.bin --cosim-tcp 127.0.0.1:5591 &
@@ -44,6 +46,7 @@ class Panel:
     def reset(self):
         self.cmd = None
         self.args = bytearray()
+        self.head = b""                     # QSPI: the frame's opcode word so far
         self.xs, self.xe, self.ys, self.ye = 0, MAX_SIDE - 1, 0, MAX_SIDE - 1
         self.x, self.y = 0, 0
         self.width, self.height = 0, 0      # the extent pixels have reached
@@ -63,6 +66,17 @@ class Panel:
             if data:
                 self.command(data[-1])
         tx = t.get(3, b"")
+        if self.dc_pin is None:              # QSPI: the opcode word opens a frame
+            if len(self.head) < 4:
+                take = 4 - len(self.head)
+                self.head, tx = self.head + tx[:take], tx[take:]
+                if len(self.head) == 4:
+                    self.command(self.head[2])
+            if tx and len(self.head) == 4:
+                self.data(tx)
+            if not t.get(12, 0):             # chip select released: the frame ends
+                self.head = b""
+            return
         dc_high = (t.get(5, 0) >> self.dc_pin) & 1
         if not tx:
             return
@@ -149,7 +163,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("port", type=int, help="the --cosim-tcp port")
     ap.add_argument("--cs", type=int, required=True, help="the panel's chip-select GPIO")
-    ap.add_argument("--dc", type=int, required=True, help="the panel's D/C GPIO")
+    ap.add_argument("--dc", type=int, help="the panel's D/C GPIO; none for a QSPI panel")
     ap.add_argument("--out", default="lcd.png", help="where the picture goes (default lcd.png)")
     ap.add_argument("--every", type=float, default=0.5, help="seconds between rewrites (default 0.5)")
     ap.add_argument("--name", default="lcd-view.py")

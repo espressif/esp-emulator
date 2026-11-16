@@ -286,6 +286,33 @@ The page can also be a peer on the firmware's link, for example a Matter commiss
 
 The NAT completes the firmware's handshake at once and holds the firmware's bytes until `net_tcp_opened(id, true)`. Flow IDs are not used again, also after `net_enable(false)` or `restart()`. Calls for a flow that is gone do nothing, because a close can cross a call from the page. `restart()` closes every open flow with an abort. The `net_udp6_*` sockets stay open across `restart()` and `net_enable(false)`. A flow whose firmware stays silent for 150 s, keep-alive probes included, closes with an abort. The NAT keeps the host's bytes for the firmware with no limit, so a fast download into slow firmware uses page memory. With `net_set_relay`, the relay's flow control holds each flow to 256 KiB. The methods throw when the network is off and on bad arguments.
 
+## Host-controlled clock
+
+A host that owns virtual time (a test bench with its own stimuli and device models) drives the emulator with `run_until` and reads time from `cycles`:
+
+| Method | What it does |
+|---|---|
+| `run_until(cycles)` | Run for at most `cycles` of emulated time. A wait (`wfi`/`waiti`) is skipped to its wake-up or to the bound, whichever comes first, and the harts are still waiting at the bound. Returns UART output, like `run_batch`. |
+| `run_batch(count)` | Run about `count` instructions, shared between the running harts. A wait runs on to its wake-up, so emulated time can pass `count` by up to a million cycles. |
+| `cycles()` | Emulated time in CPU-clock cycles: the clock the firmware's timers count, the same on single- and dual-core chips. |
+| `cycles_per_us()` | CPU-clock cycles per microsecond, to turn `cycles()` into time. It follows the clock the firmware sets. |
+
+After `run_until(n)`, `cycles()` has advanced by `n`, or by less when the run stopped early: a restart, a fault, a breakpoint instruction, or a virtual part that has not answered. Read `cycles()` after each call instead of adding `n`. One exception to the bound: while the ESP32-C6 LP core runs, it can be passed by up to 9 cycles, the rest of one LP-core instruction.
+
+`cycles()` counts CPU-clock cycles at whatever clock the firmware runs, so convert a difference of two readings with the `cycles_per_us()` of that interval; dividing the total is only right while the firmware keeps one CPU frequency. It starts again from zero at a chip reset.
+
+## Faults and firmware panics
+
+A CPU fault stops the machine. So does a firmware panic once `load_app_elf` has loaded the app ELF: the emulator intercepts `esp_panic_handler`, `abort` and `esp_system_abort` and stops there, as the native CLI does with `--elf`.
+
+| Method | What it does |
+|---|---|
+| `faulted()` | Whether a fault or an intercepted panic stopped the machine. `run_batch` and `run_until` then run nothing and return an empty string until `restart()` |
+| `fault_report()` | The abort reason, the faulting PC and a backtrace, as the native CLI prints them. Symbolicated when the app ELF is loaded. Empty when not faulted |
+| `set_panic_intercept(on)` | `false` lets the firmware's own panic handler run, print its `Guru Meditation Error` report and reboot (the CLI's `--no-panic-intercept`). Call it before `load_app_elf` |
+
+Check `faulted()` after each run call, next to `needs_restart()`.
+
 ## Limitations
 
 - **A host program** — Real networking needs `esp-emu-relay` on the host

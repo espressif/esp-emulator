@@ -23,7 +23,8 @@ stock ESP-IDF drivers unchanged.
 
 **What works today:** parts that read and drive GPIO pins, I2C devices, SPI
 devices, serial (UART) devices, parts that read a pin as PWM, such as a servo,
-and analog sources, a voltage on an ADC pad. A part that drives pins also
+analog sources, a voltage on an ADC pad, and parts on the chip's EN pin that
+hold it in reset, such as a watchdog supervisor. A part that drives pins also
 clocks the chip's pulse counter (PCNT), so a rotary encoder needs nothing
 more.
 
@@ -38,6 +39,7 @@ more.
 | SG90 | a hobby servo read as PWM, from LEDC or MCPWM | [part](../../examples/parts/sg90), [board](../../examples/boards/servo/README.md) |
 | Potentiometer | a knob's wiper on an ADC pad | [part](../../examples/parts/potentiometer), [board](../../examples/boards/analog/README.md) |
 | NTC thermistor | a thermistor divider on an ADC pad | [part](../../examples/parts/ntc_thermistor), [board](../../examples/boards/analog/README.md) |
+| Watchdog | a windowed watchdog supervisor that resets the chip through EN | [part](../../examples/parts/watchdog), [board](../../examples/boards/watchdog/README.md) |
 
 More parts will come from **esp-virtual-parts**, a separate project that will
 publish one `.wasm` file per component, plus an `index.json` listing each
@@ -295,6 +297,31 @@ calibration, so there the firmware reads raw codes only. On the S31 the code is 
 chip reset, and stays when the part goes; above the 3300 mV supply it is
 taken as 3300.
 
+### Wire a part to EN (reset)
+
+EN (CHIP_PU) is the chip's reset input. It is not a GPIO, so the board file
+names it instead of numbering it:
+
+```json
+"wdt": { "module": "watchdog.wasm", "pins": { "WDI": 4, "RESET": "EN" } }
+```
+
+The log then says `wired RESET=EN WDI=GPIO4` and `may hold the chip in reset
+through EN`. While the part holds EN low:
+
+- The chip runs nothing, and every pin reads released, as on a chip in reset.
+- Emulated time goes on, for this part and every other on the board. A part
+  can queue the release ahead, so a 200 ms reset pulse is 200 ms on the
+  chip's clock however fast the emulator runs.
+- When the part lets go, the chip boots as from power-on:
+  `esp_reset_reason()` is `ESP_RST_POWERON`, and nothing in RAM survives.
+
+Several parts may be wired to EN, a supervisor and a reset button for
+instance. The line is low while any of them holds it low, and the host's
+`en low` (below) counts as one more. A part that fails or leaves lets go.
+Every part is told when EN moves, whoever moved it, so one that only watches
+can follow it.
+
 ### Built-in devices and wires
 
 The board file can also place the emulator's own simple device models and
@@ -319,6 +346,11 @@ line. One file then describes the whole board:
   same `width`, `fill` and preloaded `regs`. It acknowledges and reads back
   what was written, and nothing more. That is enough to get firmware past the
   init of an IO expander, a touch controller or a PMIC.
+- An `sdcard` device is the SD card of [`--sd`](CLI.md#sd-card): `image` is
+  the card image, with optional `read_only` and `slot`, or `cs` for a card on
+  an SPI bus, and `cd` for its card-detect pad. The image is a file
+  in the board file's directory or below it: the firmware writes into it, so
+  a board file cannot name a file elsewhere on the host.
 - An `rmt-loopback` wire feeds RMT TX channel `tx` into RX channel `rx`, as
   `--rmt-loopback TX:RX` does. Channel numbers are the TRM's.
 - Numbers may be JSON numbers or `"0x"` strings.
@@ -374,6 +406,10 @@ sensor keeps its settings, as on a real board. Scheduled inputs still waiting
 are dropped, since their times belong to the run before the reset. Each part is
 told about the reset and the pin levels it left.
 
+A reset while EN is held low, by a part or by `en low`, leaves the chip in
+reset: EN belongs to the board, and the chip boots when EN is let go. A
+release a part had queued is kept.
+
 **At exit** the emulator reports how long the parts took, any part that
 failed, and any wiring the firmware never used: an I2C part whose pads never
 got a bus, an SPI part whose chip-select pad never got a chip select, or a
@@ -409,6 +445,8 @@ The kinds you will see:
 | `AnalogDrive` | the voltage an analog part holds on a pad (`pin`, `millivolts`) |
 | `Register`, `RegisterAck` | the part attaching, and the emulator accepting it |
 | `ChipReset` | the chip was reset |
+| `EnDrive` | a part pulled the chip's EN pin low (`level` false) or let it go |
+| `EnLevel` | EN moved, whoever moved it: told to every part |
 | `ClockSync` | the heartbeat, once per millisecond. Left out unless `--cosim-log-filter` names it |
 
 `--cosim-log-filter KINDS` keeps only the kinds named, comma-separated. Fields
@@ -671,7 +709,7 @@ I2C address on the same pads, or sit on the same chip-select pad.
 
 | Direction | Message | Meaning |
 |---|---|---|
-| page → worker | `{ type: "start", port, module, config }` | Load the part. `port` is the worker's end of the part's `MessageChannel` (transfer it); `module` is the `.wasm` URL or its bytes as an `ArrayBuffer`; `config` is `{ pins: { NAME: gpio }, addr }`, with `addr` only for an I2C part that takes one. An SPI or serial part is wired by its pins alone. |
+| page → worker | `{ type: "start", port, module, config }` | Load the part. `port` is the worker's end of the part's `MessageChannel` (transfer it); `module` is the `.wasm` URL or its bytes as an `ArrayBuffer`; `config` is `{ pins: { NAME: gpio }, addr, enPins: [NAME] }`, with `addr` only for an I2C part that takes one and `enPins` naming the part's pins wired to the chip's EN. An SPI or serial part is wired by its pins alone. |
 | page → worker | `{ type: "input", kind }` | Somebody interacted with the part: `kind` is the interaction's name, such as `"press"`. |
 | page → worker | `{ type: "state" }` | Somebody is looking at the part: ask what it shows. |
 | worker → page | `{ type: "state", values }` | What the part shows, as `{ name: "value" }` in the part's own words, or `null` for a part that shows nothing. |
@@ -696,6 +734,11 @@ Both are declared in `proto/esp_cosim.proto`:
 
 A mismatch is refused with a message saying which number differs. A part built
 for an older emulator keeps working as long as neither number moved.
+
+Neither number moves for an addition. A part that uses something newer than
+the emulator it runs in is not refused: the emulator logs a message it does
+not take and the part's request does nothing. EN wiring is such an addition,
+new after 1.0.0: on 1.0.0 a board file with `"EN"` is refused as not a number.
 
 ## When something goes wrong
 

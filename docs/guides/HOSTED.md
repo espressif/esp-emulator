@@ -1,10 +1,11 @@
-# ESP-Hosted (P4 ↔ C6 SDIO) Emulation
+# ESP-Hosted (P4 ↔ C5/C6 SDIO) Emulation
 
 Run the [ESP-Hosted MCU](https://github.com/espressif/esp-hosted-mcu) demo
 end-to-end inside ESP-EMU: an ESP32-P4 host (no native Wi-Fi/BLE) talks
 over SDIO to an ESP32-C6 slave that brings up Wi-Fi + BLE on the host's
 behalf. Two emulator processes are bridged through a Unix-domain stream
-socket — no real hardware required.
+socket — no real hardware required. An ESP32-C5 can be the slave in place
+of the C6 (see [C5 as the slave](#c5-as-the-slave)).
 
 ## Overview
 
@@ -82,6 +83,25 @@ Artefacts:
 > 0x4FFBCFC0`), which matches `CONFIG_ESP32P4_REV_MIN_FULL=301` —
 > ESP-IDF's default for P4 v5.5+.
 
+### C5 as the slave
+
+The C5's SDIO slave is the C6's block at the same addresses, and the emulator
+runs both with one model. Build the slave firmware with
+`idf.py set-target esp32c5` and start it with `--chip esp32c5` in place of
+`--chip esp32c6` below.
+
+The host must be built for a C5 slave too: `CONFIG_SLAVE_IDF_TARGET_ESP32C5=y`
+(`esp_wifi_remote`'s slave target, which selects
+`CONFIG_ESP_HOSTED_CP_TARGET_ESP32C5`). The host library checks the chip the
+slave reports against that setting.
+
+Verified with `esp_hosted` 2.13.1, its own `slave/` project built for
+esp32c5, against two ESP32-P4 hosts: IDF's `wifi/getting_started/station`
+(connects to the emulator's soft AP and leases an address) and the
+component's `host_nimble_bleprph_host_only_vhci` (advertises, and a Bumble
+central behind the slave's `--ble-hci tcp:localhost:9544` connects, discovers
+its services, writes and subscribes; `tools/bumble_test.py`).
+
 ## Run the demo
 
 The slave must be started first so its Unix socket is listening when the
@@ -151,7 +171,7 @@ The bridge is configured via `--hosted=<spec>`, two forms:
 | Spec | Side | Behaviour |
 |------|------|-----------|
 | `bridge:host:<path>` | P4 host | Connects to an existing slave socket. Required `--chip esp32p4`. |
-| `bridge:slave:<path>` | C6 slave | Binds and listens on `<path>`. Required `--chip esp32c6`. |
+| `bridge:slave:<path>` | C5/C6 slave | Binds and listens on `<path>`. Required `--chip esp32c5` or `--chip esp32c6`. |
 
 The transport is a length-prefixed Unix `SOCK_STREAM` so it never drops
 bytes — even at high RPC throughput the queue grows on either side

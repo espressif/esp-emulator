@@ -54,8 +54,9 @@ one but does not export it, at load, for the same reason: the first transaction
 to it would otherwise wait for an answer that cannot come.
 
 `part_on_message` is needed only by a part that claims something the emulator
-sends one-way messages about: a serial line, or a pin it reads as PWM
-(`GpioClaim.pwm_pins`). A part that claims one but does not export it is
+sends one-way messages about: a serial line, a pin it reads as PWM
+(`GpioClaim.pwm_pins`), or a DSI panel (`DsiClaim`). A part that claims one
+but does not export it is
 refused the same way, since what the chip transmits to it, or the waveform
 on its pin, would otherwise go nowhere.
 
@@ -147,6 +148,12 @@ and treat a missing one as "not wired": a board may leave a pin unconnected, and
 a part that guesses a number claims a line something else is using. A device
 whose address pins choose its I2C address finds the board's choice in `addr`;
 `0` means its own default.
+
+A pin the board wired to the chip's EN (CHIP_PU) pin, its reset input, is not
+in `pins`: EN has no GPIO number. Its name is in `en_pins`. A part that finds
+one of its pins there claims EN (`EnClaim`) and drives it with `EnDrive`,
+which holds the chip in reset while emulated time goes on; a part whose reset
+output the board put on a GPIO instead drives that pin as any other.
 
 A `PartConfig` that does not fit the buffer is not sent, and the part never
 registers.
@@ -277,7 +284,7 @@ message, its `sim_time_ns` the instant it was sent and its payload saying what
 it is about. Nothing comes back, and nothing waits: the guest is not stopped,
 and a part with nothing to say says nothing. A part reads the payload's kind
 and ignores a kind it does not take, as a host ignores an export it does not
-know; a later channel adds kinds, not exports. Two kinds today:
+know; a later channel adds kinds, not exports. Three kinds today:
 
 **`UartTx`**: what the chip transmitted on the serial line this part claimed
 (`UartClaim`), in order, as it left the TX FIFO, from the moment the
@@ -322,6 +329,13 @@ before the waveform started (or, for a part that attached meanwhile, at the
 sample of it the handshake carried); it is reported once the waveform stops or
 holds a level, whatever it is. A part that needs every edge names the pin in `watch_pins` as
 well.
+
+**`EnLevel`**: the chip's EN pin moved, at the message's `sim_time_ns`:
+`level` false and the chip is held in reset from then, true and the last
+holder let go, the chip reset following. A broadcast: every part that exports
+`part_on_message` is given it, whether it claims EN or not, and whoever moved
+the line, so a part that pulled EN sees its own pulse and one that shares the
+line sees the others'. Four bytes at most.
 
 ### `part_poll(now_ns: i64) -> i32`
 
@@ -468,6 +482,9 @@ to it reboots, and a part is treated the same way:
   pins are back to high. No pin change is reported for that; the whole word
   is. `part_poll` follows, as after any frame. (On the wire this is a
   `ChipReset` on `SIM/RESET`, which the host turns into that call.)
+- EN is the board's too. A part holding it low holds it across a reset from
+  any other cause, and the chip stays in reset. A part is not reset by its
+  own `EnDrive` either: the pulse is the chip's.
 - Time starts again. `now_ns` in that call, and in every call after it, is
   smaller than before: the emulated clock restarted near zero. A deadline the
   part holds names a time on the old clock, so compare and treat it as passed
@@ -480,6 +497,20 @@ to it reboots, and a part is treated the same way:
   had sent that the firmware had not read are gone with the chip's receiver,
   and bytes it sends before the driver puts a UART back on its pads go
   nowhere.
+
+**`DsiEvent`**: what the MIPI-DSI host sends the panel on the virtual
+channel this part claimed (`DsiClaim`), one of three things. A `DsiCommand`
+is a packet the firmware sent through the generic interface, as sent; a part
+loaded after the firmware brought the panel up is handed the ones it missed
+first. A `DpiFormat` is the video stream's size and pixel layout, sent when
+it changes. A `DpiRows` is rows of a frame that differ from the last frame
+this part was sent, in the frame buffer's own bytes: a still screen is no
+call at all, and the first frame comes whole.
+
+A frame's rows come in pieces of at most 65536 bytes of pixels, so **a part
+that claims a DSI panel offers a buffer of at least 131072 bytes**; a host
+refuses a smaller one at load. Nothing here hands the picture back out:
+`part_state` carries named values, not pixels.
 
 ## What a part cannot claim yet
 

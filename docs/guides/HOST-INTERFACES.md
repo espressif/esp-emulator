@@ -52,6 +52,8 @@ value, or `err: ...`).
 |---|---|
 | `reset` | chip reset (what a DTR/RTS toggle does on a board) |
 | `reset --soft` | software reset |
+| `en low` | pulls the chip's EN (CHIP_PU) pin low: the chip is held in reset and runs nothing, while emulated time and the board's parts go on |
+| `en high` | lets EN go: the chip boots as from power-on (`esp_reset_reason()` is `ESP_RST_POWERON`), once no part holds EN low either |
 | `erase-flash` | as `esptool erase-flash`, on the running machine's flash |
 | `erase-region OFFSET LENGTH` | as `esptool erase-region`; numbers in hex or decimal |
 | `write-region OFFSET FILE` | as `esptool write-flash`, reading the data from a path |
@@ -96,9 +98,10 @@ or SPI chip select it answers, the I2S data pads it is the audio device
 on, and the pads it is the camera sensor on. It then hears each watched pin at every transition and every other pin
 once a tick, plus the heartbeat. It drives pins at a named emulated time,
 answers bus transactions, exchanges audio with an I2S unit, and sends frames
-to the camera receiver. When it
+to the camera receiver. One that claims the chip's EN pin holds the chip in
+reset and lets it go, on emulated time. When it
 disconnects its claims are released, as for a device unplugged, and a level
-it drove stays on the pin until something else drives it.
+it drove stays on the pin until something else drives it; EN it lets go.
 
 `--cosim-tcp` goes with `--cosim-board`: the parts and the connections share
 one chip, and a pin one of them claims is refused to the other. The board's
@@ -107,7 +110,7 @@ cannot take a pin from under a part.
 
 Both directions carry length-prefixed frames, `[len: u32 LE][frame]`. From
 the emulator, a frame is `[topic_len: u16 LE][topic][EmulatorMessage]`: a
-broadcast carries its topic (`SIM/CLOCK`, `SIM/RESET`, `HW/GPIO/4/LEVEL`), a
+broadcast carries its topic (`SIM/CLOCK`, `SIM/RESET`, `SIM/EN`, `HW/GPIO/4/LEVEL`), a
 reply to this consumer alone carries `@` and its name (`@tcp:1`). To the
 emulator, a frame is a bare `EmulatorMessage`. A consumer that stops reading
 loses broadcasts rather than holding the chip; a frame over 256 KiB closes the
@@ -127,6 +130,14 @@ esp-emu --chip esp32c3 --firmware build/merged_flash.bin --cosim-tcp 127.0.0.1:5
 python3 tools/cosim-tcp-press.py 5590
 ```
 
+`tools/cosim-tcp-reset.py` is a device on the chip's EN pin: it holds the
+chip in reset for 200 ms of emulated time, or the time given, and reports the
+line falling and rising and the reset that follows.
+
+```sh
+python3 tools/cosim-tcp-reset.py 5590 500
+```
+
 `tools/cosim-lcd-view.py` is a device that answers the bus: an SPI display
 (the ST7789 / ILI9341 command set, which `esp_lcd` and the raw
 `spi_master/lcd` example both speak) that claims the panel's chip select,
@@ -137,6 +148,10 @@ draws the pixels into a PNG, rewritten as the firmware fills the screen:
 esp-emu --chip esp32s3 --firmware build/merged_flash.bin --cosim-tcp 127.0.0.1:5591 &
 python3 tools/cosim-lcd-view.py 5591 --cs 10 --dc 9 --out lcd.png
 ```
+
+A QSPI panel (CO5300, SH8601, ST77916) has no D/C line: leave `--dc` out, and
+the script takes the command from the opcode word that opens each chip-select
+frame.
 
 A write completes as the firmware clocks it, so the panel never holds the
 chip up; a read parks the firmware until the script answers. Together with
@@ -218,6 +233,30 @@ does the same. A `.wasm` part cannot claim a sensor yet, and there is no
 command-line flag that feeds frames: a sensor is a device with a control bus,
 a format the firmware programs and a cadence of its own, which is what a
 consumer on this bus is.
+
+`tools/cosim-tcp-dsi-view.py` is the panel on ESP32-P4's MIPI-DSI link: it
+draws what the firmware shows, through the stock `esp_lcd` DSI bus, DBI
+command channel and DPI panel, into a PNG:
+
+```sh
+esp-emu --chip esp32p4 --firmware build/merged_flash.bin --cosim-tcp 127.0.0.1:5595 &
+python3 tools/cosim-tcp-dsi-view.py 5595 --out dsi.png
+```
+
+A panel claims a virtual channel of the link (`dsi_claim(vc)`, 0 unless the
+firmware says otherwise), not pads: the DSI lanes are not on the GPIO matrix.
+Each `dsi_event(payload)` is then one of three things. A command is a packet
+the firmware sent the panel through the generic interface, as sent (`--commands`
+prints them); a panel that attaches late is first sent the ones it missed. The
+format is the video stream's size and pixel layout, RGB565 little-endian or
+three bytes blue-green-red, sent when it changes. Rows are the rows of a frame
+that differ from the last one the panel was sent, in the frame buffer's own
+bytes: a still screen sends nothing, and the first frame comes whole. The
+script draws the frame buffer; it does not apply the panel's own state (sleep,
+display off, brightness). A read the firmware makes of the panel is answered
+by the emulator with zeros. A `.wasm` part can claim a panel and is handed the
+same messages (`proto/PART_ABI.md`), though it has no way yet to show the
+picture. There is no command-line flag that writes frames: the script is that.
 
 Start a script before the emulator when the firmware talks to the device at
 boot: the emulator does not wait for a consumer, and `connect` retries for a

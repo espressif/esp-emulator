@@ -72,6 +72,13 @@
 #include "driver/spi_master.h"
 #include "soc/spi_pins.h"
 #endif
+#include "esp_heap_caps.h"
+#include "sdmmc_cmd.h"
+#if SOC_SDMMC_HOST_SUPPORTED
+#include "driver/sdmmc_host.h"
+#else
+#include "driver/sdspi_host.h"
+#endif
 
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -114,6 +121,7 @@ extern const char *TAG;
 
 /* --- test_storage.c --- */
 bool test_nvs(void);
+bool test_sd_card(void);
 bool test_partition_table(void);
 bool test_spi_flash(void);
 bool test_mmap(void);
@@ -160,6 +168,7 @@ bool test_smp_pinned(void);
 
 /* --- test_system.c --- */
 bool test_system_info(void);
+bool test_float_ctor(void);
 bool test_esp_event_custom(void);
 
 /* --- test_net.c --- */

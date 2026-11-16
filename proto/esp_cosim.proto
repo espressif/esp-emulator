@@ -31,6 +31,7 @@
 // subscribing to "HW/GPIO/" receives every pin and "HW/GPIO/4/" only pin 4:
 //   SIM/CLOCK             ClockSync, once per simulated quantum
 //   SIM/RESET             ChipReset, once per chip reset
+//   SIM/EN                EnLevel, when the chip's EN pin moves
 //   HW/GPIO/<pin>/LEVEL   one message per pin per change
 //
 // Audio is not a topic: I2sFormat and I2sOut go on ROUTER to the one consumer
@@ -128,6 +129,12 @@ message EmulatorMessage {
     // A camera sensor on the DVP bus, on ROUTER. See DvpClaim.
     DvpFormat dvp_format = 32;  // emu -> consumer
     CamFrame cam_frame = 33;    // consumer -> emu
+
+    // A MIPI-DSI panel, on ROUTER. See DsiClaim.
+    DsiEvent dsi_event = 36;  // emu -> consumer
+    // The chip's EN (CHIP_PU) input, on ROUTER. See EnClaim.
+    EnDrive en_drive = 34;  // consumer -> emu
+    EnLevel en_level = 35;  // emu -> consumer, on PUB
   }
 }
 
@@ -291,6 +298,11 @@ message PartConfig {
   // its chip-select pad (SpiClaim).
   reserved 4;
   reserved "cs_slot";
+  // The part's own pin names the board wired to the chip's EN (CHIP_PU) pin
+  // instead of a GPIO: ["RESET"] for a supervisor's reset output. Such a pin
+  // is not in `pins`, EN having no GPIO number; the part claims EN (EnClaim)
+  // and drives it with EnDrive.
+  repeated string en_pins = 5;
 }
 
 // What a part shows: its own state, for a page or a script to display. See
@@ -320,6 +332,8 @@ message Claim {
     AnalogClaim analog = 5;
     I2sClaim i2s = 17;
     DvpClaim dvp = 18;
+    DsiClaim dsi = 20;
+    EnClaim en = 19;
   }
 }
 
@@ -645,6 +659,9 @@ message CamFrame {
 //
 // OBSERVING a pin at tick resolution needs no claim: every pin's level is
 // published to whoever subscribes, once per peripheral tick when it differs.
+// The exception is a pad an I2S frame clock (WS) is on: the tick would sample
+// every edge of it, so its level is published only while some consumer
+// watches it, and once when the clock stops.
 // `watch_pins` asks for more: every transition of those pins, each at its own
 // time, so a pulse inside one tick is two messages. Not exclusive, any pin,
 // including one this consumer drives. An LED model should watch its pin and
@@ -657,6 +674,50 @@ message GpioClaim {
   uint64 drive_pins = 1;
   uint64 watch_pins = 2;
   uint64 pwm_pins = 3;
+}
+
+// "I am wired to the chip's EN (CHIP_PU) pin and may pull it low."
+//
+// EN is the chip's reset input, not a GPIO: a supervisor, a windowed
+// watchdog, a reset button or a host MCU pulls it low to reset the chip. The
+// claim is not exclusive. Those devices drive the line open-drain against one
+// pull-up, so several consumers may claim it and the line is low while any
+// of them holds it low.
+//
+// A consumer that goes away lets go of the line. One that never claimed it
+// has its EnDrive ignored.
+message EnClaim {}
+
+// Drive EN, at EmulatorMessage.sim_time_ns, scheduled as a GpioDrive is.
+//
+// level false pulls the line low, and the chip is held in reset: it runs
+// nothing, drives no pin (every pin reads released, each change published as
+// a GpioLevel) and asks for no bus transaction. Emulated time goes on, on the
+// same timeline: ClockSync keeps coming and what is scheduled stays
+// scheduled, so the hold can be let go by an EnDrive queued beforehand.
+//
+// level true lets go. When no consumer and no host control holds the line
+// low any more, the chip leaves reset as it leaves power-on: one ChipReset,
+// a new timeline, and firmware that reads the power-on reset reason. Letting
+// go of a line this consumer does not hold low is nothing.
+//
+// The line belongs to the board, so a chip reset from any other cause does
+// not move it: a chip reset while EN is low stays held.
+message EnDrive {
+  bool level = 1;
+}
+
+// The level of the chip's EN (CHIP_PU) pin, broadcast on SIM/EN when it
+// moves, to every registered consumer whether or not it claims the pin.
+//
+// level false: something pulled EN low at sim_time_ns and the chip is in
+// reset from then on. level true: the last holder let go at sim_time_ns, the
+// last instant of the old timeline; the ChipReset that follows starts the new
+// one. So a part that pulled EN low sees its own pulse come back, and one that
+// only watches (a status LED, a second supervisor) sees the line another
+// part, or the host, moved. RegisterAck.en_low is the level at attach.
+message EnLevel {
+  bool level = 1;
 }
 
 message RegisterAck {
@@ -682,6 +743,9 @@ message RegisterAck {
   // needs this: it would otherwise assume the reset state and stay wrong about
   // any pin the firmware drove during init until that pin next moved.
   uint64 pin_levels = 7;
+  // True when the chip's EN pin is low at the instant of accept: the chip is
+  // held in reset, and pin_levels is every pin released. See EnLevel.
+  bool en_low = 8;
 }
 
 // Drive an input pin, at EmulatorMessage.sim_time_ns. Sent on ROUTER.
@@ -990,4 +1054,92 @@ message SpiPhase {
   // MSB first unless lsb_first. A partial last byte sends its first
   // bits % 8 bits in that order (the high bits when MSB first).
   bytes data = 3;
+}
+
+// "I am the panel on this virtual channel of the DSI link."
+//
+// The one claim that names no pads: the DSI lanes are dedicated pads outside
+// the GPIO matrix and there is one DSI host, so nothing the firmware does
+// routes a lane and there is nothing to resolve. What tells two devices on
+// one link apart is the virtual channel, the two bits every DSI packet header
+// carries. Exclusive per channel. Refused on a chip with no DSI host.
+//
+// A panel's other lines -- reset, backlight -- are GPIOs, claimed or watched
+// the ordinary way.
+message DsiClaim {
+  uint32 virtual_channel = 1;  // 0..3; esp_lcd's DBI/DPI `virtual_channel`
+}
+
+// Everything the DSI host sends a panel, as one message kind: a command, the
+// video stream's format, or rows of a frame.
+message DsiEvent {
+  oneof what {
+    DsiCommand command = 1;
+    DpiFormat format = 2;
+    DpiRows rows = 3;
+  }
+}
+
+// One packet the host sent through its generic interface to this panel's
+// virtual channel: a DCS command, a generic write, a read request. Delivered
+// as sent, in order; what a vendor register means is the panel's business.
+//
+// A panel that attaches after the firmware brought it up is first sent the
+// packets it missed (the last 256 on the link), so it leaves sleep as it
+// would have.
+//
+// A read is answered by the emulator, with zeros: the HAL spins on the read
+// FIFO, and a panel across this boundary answers too late. The panel sees the
+// request and may ignore it.
+message DsiCommand {
+  // The MIPI data type: 0x05 DCS short write, 0x15 with one parameter, 0x39
+  // DCS long write, 0x03/0x13/0x23/0x29 generic writes; 0x04/0x14/0x24
+  // generic and 0x06 DCS reads.
+  uint32 dt = 1;
+  // A short packet's two header bytes (command, parameter), or a long
+  // packet's payload (command, then its parameters).
+  bytes data = 2;
+}
+
+// How the pixels in DpiRows lie: the frame buffer's own bytes, in memory
+// order.
+enum DpiPixelFormat {
+  DPI_PIXEL_FORMAT_UNSPECIFIED = 0;
+  // 16-bit RGB565 words, little-endian: esp_lcd and LVGL write a DPI frame
+  // buffer as native uint16_t, unlike an SPI panel's stream, which goes out
+  // high byte first.
+  DPI_PIXEL_FORMAT_RGB565_LE = 1;
+  // Three bytes a pixel: blue, green, red (IDF's color_pixel_rgb888_data_t,
+  // LVGL's RGB888).
+  DPI_PIXEL_FORMAT_BGR888 = 2;
+}
+
+// The shape of the video stream. A diff: sent when it changes. Taken from
+// the bridge's registers, never from a frame's length. A stream the emulator
+// does not carry (RGB666, YUV) is not described at all.
+message DpiFormat {
+  // DPI output on and the frame clock running. False: the stream stopped,
+  // and what the glass shows is the panel's business.
+  bool streaming = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  DpiPixelFormat format = 4;
+}
+
+// Rows of the frame that changed since the last frame this panel was sent.
+//
+// A DPI link re-sends the whole picture every VSYNC, so the emulator sends
+// only the rows that differ from what the panel last saw: a still screen
+// sends nothing. The first frame after the panel attaches, after a chip
+// reset or after the format changes is sent whole. In pieces of at most
+// 64 KiB of pixels, always whole rows.
+message DpiRows {
+  // Which frame: a number that goes up with every frame, the same on all of
+  // one frame's rows, which are sent together and in order.
+  uint64 frame = 1;
+  // First row and how many; `pixels` is exactly `rows` rows of DpiFormat's
+  // width, in its format.
+  uint32 y = 2;
+  uint32 rows = 3;
+  bytes pixels = 4;
 }

@@ -40,6 +40,29 @@ bool test_system_info(void)
     return true;
 }
 
+/* --------------- Float in a pre-scheduler constructor --------------- */
+
+/* Runs from do_global_ctors(), before the scheduler: on Xtensa nothing has
+ * written CPENABLE yet, so the FPU works only if it leaves reset enabled. */
+static volatile float s_ctor_seed = 3.0f;
+static volatile float s_ctor_inverse;
+
+__attribute__((constructor)) static void float_ctor(void)
+{
+    s_ctor_inverse = 1.0f / (s_ctor_seed * s_ctor_seed);
+}
+
+bool test_float_ctor(void)
+{
+    const char *TN = "float_ctor";
+    int scaled = (int)(s_ctor_inverse * 9000.0f + 0.5f);
+    if (scaled != 1000) {
+        FAIL_MSG(TN, "constructor computed %d, expected 1000", scaled);
+        return false;
+    }
+    return true;
+}
+
 /* --------------- 17. esp_event custom loop --------------- */
 
 ESP_EVENT_DEFINE_BASE(EMU_TEST_EVENTS);

@@ -57,6 +57,6 @@ endif()
 
 idf_component_register(SRCS ${srcs}
                        INCLUDE_DIRS "."
-                       REQUIRES nvs_flash esp_driver_gpio esp_driver_rmt esp_driver_pcnt esp_driver_ledc esp_driver_i2c esp_driver_i2s esp_driver_spi esp_timer esp_event esp_netif pthread esp_eth bt
+                       REQUIRES nvs_flash esp_driver_gpio esp_driver_rmt esp_driver_pcnt esp_driver_ledc esp_driver_i2c esp_driver_i2s esp_driver_spi sdmmc esp_driver_sdmmc esp_driver_sdspi esp_timer esp_event esp_netif pthread esp_eth bt
                        PRIV_REQUIRES spi_flash esp_partition app_update esp_wifi mbedtls esp_hw_support esp_driver_gptimer ${ecdsa_hal_req} esp_security efuse ${ee_req})
 target_compile_definitions(${COMPONENT_LIB} PRIVATE EMU_TEST_PIE=${emu_test_pie} EMU_TEST_EE=${emu_test_ee})

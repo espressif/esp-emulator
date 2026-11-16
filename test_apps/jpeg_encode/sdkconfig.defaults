@@ -1,0 +1,4 @@
+CONFIG_ESP_TASK_WDT_EN=n
+# The encoder's buffers are allocated from external RAM.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MEMTEST=n

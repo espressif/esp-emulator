@@ -80,8 +80,12 @@ void app_main(void)
     }
 
     RUN_TEST("system_info",            test_system_info);
+    RUN_TEST("float_ctor",             test_float_ctor);
     RUN_TEST("printf",                 test_printf);
     RUN_TEST("gpio",                   test_gpio);
+    /* Before spi_iomux, which keeps SPI2 for the rest of the run: on a chip
+     * with no SDMMC host the card is on that bus, with DMA. */
+    RUN_TEST("sd_card",                test_sd_card);
 #if SOC_GPSPI_SUPPORTED
     RUN_TEST("spi_iomux",              test_spi_iomux);
 #endif

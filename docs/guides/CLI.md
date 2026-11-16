@@ -32,7 +32,7 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--uart1-tcp <HOST:PORT>` | — | Bridge UART1 to a TCP server. Side channel for simulating an external serial device (sensor, GPS, modem) with a host-side script — UART0 keeps stdin/stdout and `--exit-on`/`--inject-on`. Without a connected client, UART1 TX is discarded. |
 | `--psram-size <SIZE>` | `8M` (C5, S3), `16M` (P4, S31) | External RAM the board is modelled with: `4M`/`8M`/`16M`/`32M`/`64M`, or `0` for no device. Only the chips with external RAM take it. Firmware cannot choose — see [PSRAM Size](#psram-size). |
 | `--strap-mode <HEX>` | — | GPIO_STRAP value at reset. `0x02` = UART download mode (jumps to ROM entry instead of firmware entry; remapped per chip, so pass `0x02` on every target); `0x04` = USB-Serial-JTAG download; `0x08` = SPI flash boot (default). Mirrors QEMU's `-global driver=esp32cN.gpio,property=strap_mode,value=…`. |
-| `--control-tcp <HOST:PORT>` | — | Host control channel: newline-delimited `reset`, `reset --soft`, `erase-flash`, `erase-region OFF LEN`, `write-region OFF FILE`, `read-region OFF LEN FILE`, `ping`. Acts on the running machine, so one process and one output stream survive a reset — see [Host Control Channel](HOST-INTERFACES.md#host-control-channel). |
+| `--control-tcp <HOST:PORT>` | — | Host control channel: newline-delimited `reset`, `reset --soft`, `en low`, `en high`, `erase-flash`, `erase-region OFF LEN`, `write-region OFF FILE`, `read-region OFF LEN FILE`, `ping`. Acts on the running machine, so one process and one output stream survive a reset — see [Host Control Channel](HOST-INTERFACES.md#host-control-channel). |
 | `--gdb <PORT>` | — | Serve a GDB remote stub on this port (QEMU's `-s` is 1234). `riscv32-esp-elf-gdb` / `xtensa-esp32s3-elf-gdb` connect with `target remote :PORT`. On dual-core chips each core is a thread (`Thread 1` = CPU0, `Thread 2` = CPU1), so `info threads`, `thread N` and breakpoints hit on CPU1 work as under QEMU. A firmware panic or CPU fault stops the target with `SIGSEGV` for inspection instead of exiting. |
 | `--gdb-halt` | off | Hold the CPU at the reset vector until a GDB client connects (QEMU's `-S`). |
 | `--cosim-board <FILE>` | — | Run the `.wasm` parts a JSON board file places, inside the emulator. See [Run parts in the command-line emulator](PARTS.md#run-parts-in-the-command-line-emulator). |
@@ -40,6 +40,7 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--cosim-log <FILE>` | — | With `--cosim-board`: write every message between the chip and the parts to FILE, one JSON line each, as it happens. `--cosim-log-filter KINDS` keeps only those of `ClockSync`, `GpioLevel`, `GpioDrive`, `Register`, `RegisterAck`, `BusRequest`, `BusReply` and `ChipReset`, comma-separated; clock heartbeats are left out unless named. |
 | `--trace <FILE>` | — | Write a per-task Chrome Trace Event trace for Perfetto; requires `--elf`. `--trace-pc-period N` sets the PC sample rate for the hot-symbol table (default 16 ticks, 0 disables). See [Execution Tracing and Profiling](HOST-INTERFACES.md#execution-tracing-and-profiling). |
 | `--log-file <FILE>` | — | Append the emulator's log lines to FILE instead of writing them to stderr; the firmware console stays on stdout. For a harness that reads stdout and stderr as one stream, where a log line written while the firmware is partway through a line otherwise lands inside it. The startup banner and fatal errors still go to stderr. |
+| `--sd <FILE[,ro][,slot=N\|,cs=PIN][,cd=PIN]>` | — | Put an SD card in the SDMMC host's slot (ESP32-P4, ESP32-S3, ESP32-S31), or with `cs=PIN` on an SPI bus of any chip: `FILE` is a raw card image. See [SD Card](#sd-card). |
 | `--i2c-dev <PORT:ADDR[,OPTS]>` | — | Put an I2C device at 7-bit `ADDR` on HP I2C port `PORT`, beside the built-in EEPROM at 0x50 (one at 0x50 answers in its place: `--i2c-dev 0:0x50,width=2` is the 24C32 IDF's `i2c_eeprom` example expects). It ACKs and reads back what was written, so a board's IO expander, touch controller, PMIC or sensor gets past init. Repeatable. Options: `width=2` (16-bit register addresses), `fill=0xNN` (initial register value, default 0xFF), `reg=REG=VAL` (preload a register, e.g. a chip ID). On a port a virtual part is wired to, parts alone answer. See [I2C Devices](#i2c-devices). The same device is a `devices` entry of type `regfile` in a `--cosim-board` file ([PARTS.md](PARTS.md#run-parts-in-the-command-line-emulator)). |
 | `--rmt-loopback <TX:RX>` | — | Feed an RMT TX channel's symbols into an RX channel, standing in for a wire between two pins (runs the stock `ir_nec_transceiver` example). The same wire is a `wires` entry of type `rmt-loopback` in a `--cosim-board` file. |
 | `--i2s-wav <FILE>` | — | Record what an I2S unit transmits to a WAV file, whether or not a receiver listens: a speaker amplifier on the data pad. The header carries the sample rate, channels and width the firmware programmed. |
@@ -137,6 +138,46 @@ A size no device ID can name is refused at startup rather than answered wrong:
 $ esp-emu --chip esp32p4 --firmware app.bin --psram-size 12M
 Error: esp32p4 cannot report a 12582912-byte PSRAM; its device ID names 4M, 8M, 16M, 32M, 64M (or 0 for none)
 ```
+
+## SD Card
+
+`--sd FILE` puts an SD card in the SDMMC host of an ESP32-P4, ESP32-S3 or
+ESP32-S31, so the stock `esp_vfs_fat_sdmmc_mount` mounts it. `--sd
+FILE,cs=PIN` puts it on an SPI bus instead, on any chip, for
+`esp_vfs_fat_sdspi_mount`. `FILE` is a raw image of the card: a FAT volume,
+with a partition table or without one.
+
+```sh
+truncate -s 64M card.img && mkfs.vfat -F 32 card.img
+esp-emu --chip esp32p4 --firmware build/merged_flash.bin --sd card.img
+```
+
+- The card is there only when the flag is given. Without it the slot is empty
+  and every command times out.
+- It is an SDHC card of the image's size, in 512-byte blocks. The size counts
+  in units of 512 KiB; a remainder is not part of the card.
+- What the firmware writes goes into the image as it is written, so the image
+  can be prepared before a run and inspected after it.
+- `--sd card.img,ro` write-protects the card. The image is opened read-only
+  and the driver's writes fail, as on a protected card.
+- `--sd card.img,slot=1` names the slot. Without it the card is in the slot
+  the firmware brings a memory card up on; beside an ESP-Hosted slave
+  (`--hosted`), which takes slot 1, it is in slot 0.
+
+- `--sd card.img,cs=10` is a card in SPI mode: `PIN` is the GPIO the firmware
+  drives as the card's chip select (`sdspi_device_config_t.gpio_cs`). The card
+  takes what either GP-SPI bus clocks while that pad is low, so the bus and
+  the other three pads need no naming. `slot=` and `cs=` exclude each other.
+
+- `--sd card.img,cd=21` names the GPIO the slot's card-detect switch is on:
+  the pad is held low while the card is there, for firmware that passes
+  `gpio_cd`. On the SDMMC host a card-detect or write-protect pad the firmware
+  routes reads as that pad's level, so a script or a part can move it.
+
+Removing the card during a run is not modelled. In a `--cosim-board`
+file the same card is a `devices` entry:
+`{ "type": "sdcard", "image": "card.img", "read_only": false, "slot": 0 }`,
+or with `"cs": 10` in place of `"slot"`.
 
 ## I2C Devices
 
