@@ -27,6 +27,14 @@ chain — mask ROM → 2nd-stage bootloader → app — on every supported chip.
 | `camera_dvp/` | the stock `esp_driver_cam` DVP controller receives raw and JPEG frames from a camera sensor played over `--cosim-tcp`; the frame buffer is in external RAM | p4, s3, s31 |
 | `jpeg_encode/` | the stock `esp_driver_jpeg` encoder on a picture in four input formats; each colour result is decoded again by the mask ROM's decoder and compared with the picture | s31 |
 | `en_watchdog/` | kicks a windowed watchdog supervisor wired to the chip's EN pin ten times, then hangs, so the part resets the chip; the firmware of the [watchdog board](../examples/boards/watchdog/README.md) | c3, c6, p4, s3 |
+| `i2s_echo/` | plays and records through the stock `i2s_std` driver against a microphone and an amplifier part; the firmware of the [audio board](../examples/boards/audio/README.md) | all |
+| `ir_nec_rx/` | decodes NEC frames from an infrared receiver part with the stock `esp_driver_rmt` receiver; the firmware of the [IR board](../examples/boards/ir/README.md) | all |
+| `oled_button/` | draws on an SSD1306 OLED over I2C and redraws on a button press; the firmware of the [OLED board](../examples/boards/oled/README.md) | c3, s3, p4 |
+| `dht22_read/` | reads a DHT22 on one wire with the GPIO driver and `esp_timer`, timing every level itself; the firmware of the [DHT board](../examples/boards/dht/README.md) | all |
+| `ws2812_strip/` | drives a WS2812 LED strip through the stock RMT transmit driver; the firmware of the [LED strip board](../examples/boards/ws2812/README.md) | all |
+| `camera_part/` | probes and programs a camera sensor part over SCCB and receives its frames with the stock `esp_driver_cam`: an OV2640 on DVP, and on P4 an OV5647 on MIPI CSI; the firmware of the [camera boards](../examples/boards/camera/README.md) | s3, p4 |
+| `camera_host_frames/` | the stock `esp_driver_cam` DVP controller captures JPEG frames that `--camera-frames` feeds from files | p4 |
+| `apsta_gateway/` | a soft AP of its own on 192.168.4.1/24 beside a station on the emulator's AP, with the emulator on `net=10.0.2.0/24` | c3, c5, c6, s3, s31 |
 
 ## Running the smoke app
 
