@@ -179,6 +179,36 @@ Wi-Fi Provisioning Successful.
 
 You can confirm BLE traffic actually went through `hci1` (not the system default `hci0`) via `hciconfig hci1` — the `acl` and `events` counters bump after the run.
 
+## SoftAP provisioning
+
+Built with `CONFIG_APP_NETWORK_PROV_TRANSPORT_SOFTAP=y`, the firmware runs an
+open provisioning AP (`PROV_xxxxxx`) on ESP-IDF's default `192.168.4.1/24`
+beside its station. The emulator joins that AP and forwards a host port to
+its HTTP server. Run the emulator's own network on another subnet: on the
+default `192.168.4.0/24` the station's lookups go to the provisioning AP
+while it is still up, and the first one after provisioning fails
+(`getaddrinfo() returns 202`; the emulator warns when it joins that AP).
+
+```bash
+esp-emu \
+  --chip esp32c3 \
+  --firmware build/merged_flash.bin \
+  --elf build/switch.elf \
+  --net "user,net=10.0.2.0/24,hostfwd=tcp:127.0.0.1:18080-:80"
+```
+
+Provision through the forwarded port with ESP-IDF's `esp_prov` (Security 2
+takes the PoP as `--sec2_pwd`):
+
+```bash
+python3 esp_prov.py --transport softap --service_name 127.0.0.1:18080 \
+  --sec_ver 2 --sec2_username wifiprov --sec2_pwd <pop> \
+  --ssid myssid --passphrase mypassword
+```
+
+`esp-rainmaker-cli provision --transport softap` always connects to
+`192.168.4.1:80`, so it needs that address pointed at the forwarded port.
+
 ## How it works
 
 The bridge is the same one used for [Matter commissioning](./MATTER.md). It creates two Bumble virtual BLE controllers on a shared `LocalLink`:

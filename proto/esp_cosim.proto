@@ -120,6 +120,11 @@ message EmulatorMessage {
     // A voltage on an analog pad, on ROUTER. See AnalogClaim.
     AnalogDrive analog_drive = 13;  // consumer -> emu
 
+    // A timed waveform played into a pin, on ROUTER. See PulseDrive.
+    PulseDrive pulse_drive = 14;  // consumer -> emu
+    // A run of a pin's edges, on ROUTER. See GpioClaim.edge_pins.
+    GpioEdges gpio_edges = 15;  // emu -> consumer
+
     // Sound, on ROUTER: what an I2S unit transmits and what it should
     // receive. See I2sClaim.
     I2sFormat i2s_format = 29;  // emu -> consumer
@@ -135,6 +140,19 @@ message EmulatorMessage {
     // The chip's EN (CHIP_PU) input, on ROUTER. See EnClaim.
     EnDrive en_drive = 34;  // consumer -> emu
     EnLevel en_level = 35;  // emu -> consumer, on PUB
+    // A MIPI CSI sensor, on ROUTER. See CsiClaim. Its pixels come back as
+    // CamFrame, as a DVP sensor's do.
+    CsiFormat csi_format = 37;  // emu -> consumer
+
+    // An SPI master outside the emulator, the chip its slave, on ROUTER.
+    // See SpiMasterClaim.
+    SpiMasterTransfer spi_master_transfer = 38;  // consumer -> emu
+    SpiMasterResult spi_master_result = 39;      // emu -> consumer
+
+    // Emulated time, granted by a consumer that holds the clock, on ROUTER.
+    // See TimeClaim.
+    TimeGrant time_grant = 40;      // consumer -> emu
+    TimeWaiting time_waiting = 41;  // emu -> consumer
   }
 }
 
@@ -169,7 +187,8 @@ message ChipReset {
 // single broadcast carrying the current time. Never infer elapsed time by
 // counting ClockSyncs -- read sim_time_ns.
 //
-// TIMING MODEL - read this before writing a consumer. The emulator is ADVISORY:
+// TIMING MODEL - read this before writing a consumer. Unless a consumer holds
+// the clock (TimeClaim), the emulator is ADVISORY:
 // it broadcasts and keeps running. It does NOT wait for you to reply, and a
 // consumer that falls behind does not slow it down. The practical consequence
 // is that an event you schedule must be far enough ahead that your message
@@ -305,6 +324,22 @@ message PartConfig {
   repeated string en_pins = 5;
 }
 
+// What a part that sees asks to be shown: a picture's size, its layout and
+// how many a second it sends. See `part_video_format` in PART_ABI.md. Never
+// sent on either channel: a host asks the part on behalf of whatever feeds it
+// pictures (a webcam, a folder of frames), as it asks for PartState on behalf
+// of whoever looks. A camera sensor answers from the registers the firmware
+// programmed, and the firmware reprograms them, so a host asks before each
+// picture rather than once.
+message VideoFormat {
+  uint32 width = 1;
+  uint32 height = 2;
+  // As CamFrame.fourcc: 'JPEG', the RGB565 and YUV422 orders, 'GREY', or a
+  // Bayer mosaic.
+  fixed32 fourcc = 3;
+  uint32 fps = 4;
+}
+
 // What a part shows: its own state, for a page or a script to display. See
 // `part_state` in PART_ABI.md. Never sent on either channel: a host asks the
 // part for it on behalf of whoever is looking, as it hands the part an
@@ -312,7 +347,8 @@ message PartConfig {
 //
 // The emulator has no part in this. A pin's level is a fact about the chip
 // and travels as GpioLevel; what an LED on that pin looks like, what a sensor
-// is set to, what a display holds, is the part's own and travels here.
+// is set to, is the part's own and travels here. A display's pixels are
+// bytes, not named values: they travel through `part_render`.
 message PartState {
   // Named readings and indicators, in the part's own words: "pressed" ->
   // "true", "temperature" -> "22.5", "lit" -> "false". The names are the
@@ -334,6 +370,9 @@ message Claim {
     DvpClaim dvp = 18;
     DsiClaim dsi = 20;
     EnClaim en = 19;
+    CsiClaim csi = 21;
+    SpiMasterClaim spi_master = 22;
+    TimeClaim time = 23;
   }
 }
 
@@ -414,6 +453,173 @@ message SpiClaim {
   optional bool cs_active_high = 7;
 }
 
+// "I hold the clock: the chip runs only as far as I let it."
+//
+// For a consumer that has a clock of its own to keep the chip in step with:
+// another simulator running the rest of the board, or a test that wants the
+// same run every time. Without this claim the emulator is advisory (see
+// ClockSync): it runs at its own pace and waits for nobody.
+//
+// While a consumer holds the claim, emulated time advances only through
+// what that consumer has granted with TimeGrant. From the moment its
+// registration is accepted it has granted nothing, so the chip stops there
+// until the first grant. When the chip has used up what a holder granted it
+// stops and tells that holder (TimeWaiting). Stopped is stopped in emulated
+// time only: the
+// boundary is still served, so a pin driven, a bus answer or an SPI
+// transfer that arrives meanwhile is taken at the instant the chip stands
+// at, and its result sent, without a grant.
+//
+// Several consumers may hold the claim; the chip runs as far as the one
+// that has granted least. A holder that leaves, or registers again without
+// the claim, lets go of the clock.
+//
+// The chip stops on the grant to within an instruction and a system-timer
+// step (62.5 ns); the next grant counts from where the last one ended, not
+// from where the chip stopped, so nothing adds up.
+//
+// While the clock is held the emulator does not pace itself against the
+// host's clock, awake or asleep: the pace is the holder's. What a network or
+// Bluetooth backend brings from the host still arrives in host time, so
+// with one attached a run is bounded by its grants but not repeatable.
+message TimeClaim {}
+
+// "Run this much more emulated time." Sent on ROUTER by a consumer that
+// holds a TimeClaim, applied when it arrives whatever sim_time_ns says.
+//
+// An amount, not a time on the emulator's timeline: the holder's own clock
+// has another origin, and a chip reset restarts the emulator's timeline
+// while the board's time goes on. Grants add up: what is left of the last
+// one is kept, across a chip reset too. A consumer that steps its own clock
+// in quanta grants one quantum each time its clock has advanced by one.
+//
+// Sent by a consumer that does not hold the claim, it is dropped and said.
+message TimeGrant {
+  uint64 advance_ns = 1;
+}
+
+// The chip has used up what this consumer granted and stands still, at
+// sim_time_ns. Sent on ROUTER to a consumer that holds a TimeClaim, once
+// each time the chip reaches the end of that consumer's grants, the stop at
+// registration included, and not again until it has granted more. A holder
+// whose grants reach further than where the chip stopped is not told: the
+// chip waits on another.
+//
+// A holder that wants strict lockstep waits for this before it lets its own
+// clock run on, and then grants again: the chip is then never more than one
+// grant behind it, nor ahead. A grant of no time is not answered.
+message TimeWaiting {}
+
+// "I am the SPI master on this chip select, and the chip is my slave."
+//
+// The other way round from SpiClaim: there the chip is the master and the
+// consumer a device on its bus; here the consumer is a host processor, the
+// chip one of its devices (IDF's spi_slave driver), and the consumer clocks
+// each transfer with SpiMasterTransfer.
+//
+// As with every bus claim the pad is named and the controller derived: the
+// slave is the GPSPI the firmware put in slave mode with its chip-select
+// input on cs_pin, through the GPIO matrix or IO_MUX, which the emulator
+// reads again whenever the routing changes. Until the driver has done that
+// the pad selects nothing, and a transfer finds no slave
+// (SpiMasterResult.selected false).
+//
+// Bytes cross, not pad edges: the chip-select, clock and data pads do not
+// move, so a GPIO interrupt the firmware put on its own chip select does not
+// fire. A consumer that needs one also names the pad in GpioClaim.drive_pins
+// and drives it around its transfers. Handshake, data-ready and reset lines
+// beside the bus are ordinary pins: GpioClaim, GpioLevel, GpioDrive, and
+// EnClaim for the chip's EN.
+//
+// One SpiMasterClaim per consumer: a SpiMasterTransfer names no pad, so the
+// emulator takes the chip select from the claim. A chip-select pad another
+// consumer claims, as a master or as a device (SpiClaim), is refused.
+message SpiMasterClaim {
+  // `optional` for presence, as on SpiClaim: GPIO 0 is a real pad, and a
+  // claim without a chip select is refused rather than read as pin 0.
+  optional uint32 cs_pin = 1;
+
+  // The bus pads, if the drawing knows them. Checked to be pads the chip
+  // has, and otherwise not used: the chip select identifies the slave.
+  optional uint32 clk_pin = 2;
+  optional uint32 mosi_pin = 3;
+  optional uint32 miso_pin = 4;
+}
+
+// One transfer the consumer clocks as the SPI master: chip select falls at
+// EmulatorMessage.sim_time_ns, the bytes of `tx` go out on MOSI while as many
+// come back on MISO, and chip select rises. Sent on ROUTER by a consumer that
+// holds a SpiMasterClaim, scheduled through the same queue as a GpioDrive: a
+// time already past starts at once and is counted in
+// ClockSync.events_fired_late.
+//
+// Full duplex, one data line each way, whole bytes: what IDF's spi_slave
+// driver serves. The half-duplex slave (spi_slave_hd) and its command set
+// are not modelled; a transfer to a controller in that mode finds no slave.
+// SPI mode and bit order are not checked against the firmware's: bytes are
+// bytes, as in SpiTransfer.
+//
+// The emulator does not stop for it, and nothing is acknowledged on the
+// wire: a slave whose firmware has loaded no transaction is clocked all the
+// same and returns what its buffer holds, as on a board. That is what a
+// handshake line is for; watch it (GpioClaim.watch_pins) and send the
+// transfer when it says the slave is ready.
+//
+// Transfers of one master are clocked in the order sent, each after the one
+// before it has ended. A chip reset ends those scheduled or under way: each
+// is answered at once, selected false.
+message SpiMasterTransfer {
+  // Quoted back in the SpiMasterResult. The consumer's own; the emulator
+  // does not interpret it.
+  uint64 id = 1;
+  // The bytes clocked out on MOSI. Its length is the transfer's: up to
+  // 32,767 bytes, the most the slave's bit counter holds. A longer one is
+  // cut there, said once, and its result is as short. An empty one with no
+  // chip select held clocks nothing and leaves the firmware's transaction
+  // as it was.
+  bytes tx = 2;
+  // The clock the master drives, in hertz. It sets when chip select rises:
+  // 8 * len(tx) / sck_hz after it fell, which is when the firmware's
+  // transaction completes. 0: the transfer takes no time.
+  uint32 sck_hz = 3;
+  // Chip select stays low after these bytes, and this consumer's next
+  // SpiMasterTransfer goes on with the same transfer where this left off.
+  // The firmware's transaction does not complete until one without it has
+  // been clocked, which may carry no bytes: chip select simply rises.
+  //
+  // For a master that learns each byte only as it clocks the one before: a
+  // simulator whose SPI controller hands its device one byte at a time and
+  // wants that byte's answer at once sends each as a piece. Each piece is
+  // answered with a SpiMasterResult of its own bytes, stamped with the time
+  // those bytes end; a piece is clocked after the one before it, however
+  // close together they were sent. The length limit is the whole transfer's.
+  //
+  // A consumer that leaves with chip select held lets go of it: the line
+  // rises and the firmware's transaction completes with what was clocked. A
+  // slave the firmware resets under a held transfer (its driver torn down
+  // and set up again) starts afresh with the next piece.
+  bool hold_cs = 4;
+}
+
+// What a SpiMasterTransfer read back, on ROUTER to the consumer that sent
+// it. Sent as soon as the bytes are known, which is when chip select falls,
+// and stamped (sim_time_ns) with the time it rises, so it may be ahead of
+// the clock by the transfer's wire time.
+message SpiMasterResult {
+  uint64 id = 1;
+  // False: no slave is on the chip select, so nothing drove MISO and `rx` is
+  // empty. The firmware has not put a controller in slave mode with its
+  // chip-select input on the claimed pad (it has not started, it freed the
+  // bus, the chip reset), or the controller is a half-duplex slave.
+  bool selected = 2;
+  // What the slave drove on MISO, as many bytes as `tx`: the bytes the
+  // firmware loaded for this transaction, then 0x00. A DMA slave whose
+  // transaction has no TX buffer loaded none; one that uses no DMA sends the
+  // 64 bytes of its buffer registers whatever they hold, the last transfer's
+  // received bytes if the firmware loaded nothing since.
+  bytes rx = 3;
+}
+
 // "I am the serial device on these two pads."
 //
 // Which UART the pads are is the firmware's choice (uart_set_pin), written
@@ -466,8 +672,10 @@ message UartClaim {
 // I2sIn. At least one is required; a codec names both. `optional` for
 // presence: GPIO 0 is a real pad.
 //
-// `bclk_pin` and `ws_pin` are accepted and not used. The emulator puts no
-// clock on those pads: what a device needs of the clock arrives as I2sFormat.
+// `bclk_pin` and `ws_pin` are accepted and not used: what a device needs of
+// the clock arrives as I2sFormat. A master direction's word select is on its
+// pad, which a consumer may watch (GpioClaim.watch_pins); BCK and MCLK are
+// not on theirs.
 //
 // One consumer per data pad and direction, and one data pad per direction for
 // a consumer: I2sFormat, I2sOut and I2sIn name no pad, so a consumer with two
@@ -514,8 +722,9 @@ message I2sFormat {
 // `channels` containers of `bits` each, interleaved, little-endian. A mono
 // transmitter's sample appears in every slot, as it does on the wire. No
 // framing: a message carries however much accumulated, usually one DMA
-// buffer, and a message boundary may fall inside a frame only if the
-// firmware's buffers do. A gap between messages is a gap in the sound.
+// buffer, and at most 4096 bytes, cut after a whole frame; a message boundary
+// falls inside a frame only if the firmware's buffers end inside one. A gap
+// between messages is a gap in the sound.
 // sim_time_ns is when the last of these bytes had been clocked out.
 message I2sOut {
   bytes pcm = 1;
@@ -546,8 +755,7 @@ message I2sIn {
 // emulator looks the pad up in the chip's table (its adc_channel.h), and a
 // pad with no channel behind it is REFUSED. A wire to a pin that cannot
 // measure is a board error, and a part that quietly read nothing would look
-// like one reading 0 V. On a chip whose ADC is not modelled (P4, S3) every
-// pad is refused, and the reason says so.
+// like one reading 0 V.
 //
 // One source per pad: refused when another consumer holds the pad in an
 // AnalogClaim or in GpioClaim.drive_pins (and a GpioClaim naming a pad
@@ -567,9 +775,10 @@ message AnalogClaim {
 //
 // The pixel clock pad is the exclusive one: a second sensor on it is refused.
 // One sensor to a consumer, since DvpFormat and CamFrame name no pad. The
-// other pads are for the record: the emulator moves whole frames, not edges,
-// so nothing is driven on them. Exactly eight data pads, D0 first; a 16-bit
-// bus is not modelled.
+// other pads are for the record: the emulator moves whole frames, not edges.
+// The one pad it drives is the one the firmware routes VSYNC from, which it
+// pulses as each frame starts, and once a frame period while the receiver is
+// stopped. Exactly eight data pads, D0 first; a 16-bit bus is not modelled.
 //
 // The sensor's control bus (SCCB) is I2C: claim its address with an I2cClaim
 // beside this one, and reset or power-down lines with a GpioClaim.
@@ -610,11 +819,42 @@ message DvpFormat {
   uint32 session = 7;
 }
 
+// "I am the MIPI CSI sensor."
+//
+// No pads: the clock and data lanes are the ESP32-P4's dedicated D-PHY pads,
+// not GPIOs, so there is nothing to route. No number: the chip has one CSI
+// host, so holding the claim at all makes it exclusive. Refused on a chip
+// without a CSI host.
+//
+// A sensor's other lines are claimed the ordinary way: its SCCB address with
+// an I2cClaim beside this one, which also answers in place of an emulator
+// stand-in (--csi-sensor) on that port, and its reset and power-down pins as
+// GPIOs.
+message CsiClaim {}
+
+// What the chip contributes to a CSI sensor's picture: DvpFormat's sibling,
+// with less in it. A D-PHY has no polarities to invert, and the CSI host
+// generates no clock for a sensor; a module carries its own oscillator.
+//
+// A diff, like DvpFormat: sent when it changes and not otherwise.
+message CsiFormat {
+  // The host out of reset with its D-PHY up, and the bridge enabled. False
+  // means nothing captures: a frame sent now is lost.
+  bool capturing = 1;
+  // Data lanes the host listens on, N_LANES + 1. A sensor programmed for a
+  // different count transmits on lanes nobody decodes, so a part holds its
+  // frames while the two disagree.
+  uint32 lanes = 2;
+  // Counts the times the receiver started capturing, as DvpFormat.session.
+  uint32 session = 3;
+}
+
 // A frame from the sensor, whole or in pieces.
 //
 // A message carries at most what the transport does (256 KiB over
-// --cosim-tcp), so a larger frame is sent as consecutive pieces, the last
-// with `end_of_frame`. Width, height and fourcc are read from that last piece.
+// --cosim-tcp, a part's own buffer from a .wasm part), so a larger frame is
+// sent as consecutive pieces, the last with `end_of_frame`. Width, height and
+// fourcc are read from that last piece.
 //
 // sim_time_ns of the last piece is when the frame starts, on the emulator's
 // clock: its VSYNC. The receiver starts it then, or at once if that has
@@ -639,11 +879,19 @@ message CamFrame {
   // 'UYVY', 'YUYV', 'YVYU', 'VYUY'; 'GREY'. 0 means 'JPEG'. Any other is
   // passed through unchecked.
   //
+  // A CSI sensor sends a Bayer mosaic, and only that: 'BA81', 'GBRG', 'GRBG'
+  // and 'RGGB' for eight-bit samples, a byte each, and 'BG10', 'GB10', 'BA10'
+  // and 'RG10' for ten-bit ones, each in a little-endian u16 with the high six
+  // bits zero. Samples, not the CSI-2 wire packing: the emulator packs them
+  // where the firmware asked for RAW10 in memory. Its frames are not paced at
+  // 1/15 s: an unstamped one comes at the CSI host's frame rate (--csi-fps).
+  //
   // A raw frame must be exactly width * height * bytes-per-pixel long: the
   // camera driver reports its buffer's size for one whatever arrived, so a
   // short frame would be invisible to firmware. It is refused instead.
   fixed32 fourcc = 5;
-  // DvpFormat.session as the sensor last heard it. A frame sent for an
+  // DvpFormat.session (or CsiFormat.session) as the sensor last heard it. A
+  // frame sent for an
   // earlier session is lost: a sensor learns of a stop after the emulator
   // has moved on, and its frames for the old session may arrive in the new
   // one, after the firmware has reprogrammed it. 0 skips the check.
@@ -665,15 +913,24 @@ message CamFrame {
 // `watch_pins` asks for more: every transition of those pins, each at its own
 // time, so a pulse inside one tick is two messages. Not exclusive, any pin,
 // including one this consumer drives. An LED model should watch its pin and
-// claim nothing else; a WS2812 or a logic view cannot do without it.
+// claim nothing else; a logic view cannot do without it.
 //
 // `pwm_pins` asks for the waveform rather than its edges: a PwmState when what
 // a PWM block puts on the pin changes. Not exclusive, any pin. A servo, a
 // buzzer, a dimmed LED or a motor driver names its pin here.
+//
+// `edge_pins` asks for the same transitions as `watch_pins`, in runs: a
+// GpioEdges to this consumer alone, rather than a GpioLevel to every one per
+// edge. A WS2812 strip or a reader of an IR LED names its pin here: a frame of
+// thousands of edges is a few messages. Not exclusive, any pin. A pin this
+// consumer names in both is read as edges only. The level of a pin read as
+// edges goes to the other consumers once a ClockSync heartbeat, where it
+// stands, not once a tick: the tick would only sample its waveform.
 message GpioClaim {
   uint64 drive_pins = 1;
   uint64 watch_pins = 2;
   uint64 pwm_pins = 3;
+  uint64 edge_pins = 4;
 }
 
 // "I am wired to the chip's EN (CHIP_PU) pin and may pull it low."
@@ -766,6 +1023,56 @@ message RegisterAck {
 message GpioDrive {
   uint32 pin = 1;
   bool level = 2;
+}
+
+// A waveform driven into an input pin in one message, under GpioDrive's
+// rules for which pin. first_level goes on the pin at
+// EmulatorMessage.sim_time_ns and is held for widths_ns[0]; the pin toggles
+// after each width and holds the level after the last one. A DHT22's reply,
+// a 1-Wire slot sequence or an ultrasonic echo is one PulseDrive rather than
+// one GpioDrive per edge.
+//
+// Each edge is scheduled as a GpioDrive is, so it lands within one
+// peripheral tick of its time. Four rules make a waveform keep its shape:
+//
+// - Late: when sim_time_ns has already passed, the whole waveform starts at
+//   once and keeps every width; its edges count in
+//   ClockSync.events_fired_late. A part answering inside a window the
+//   firmware opened cannot stamp later than the event it answers.
+// - In pieces: a waveform never starts before the end of the last one this
+//   consumer sent for the pin, so a long one sent as several messages, each
+//   stamped where the one before ends, plays back to back.
+// - Whole or not at all: more than 512 widths, or more edges than the event
+//   queue has room for, and nothing of it is queued (the second counts in
+//   ClockSync.scheduled_dropped). A zero width is a level held for no time,
+//   and is skipped.
+// - A chip reset drops what has not played, as for anything scheduled, and
+//   the pin is put back at the waveform's last level, the one it was asked
+//   to hold.
+//
+// Sent for a pin another consumer claims in GpioClaim.drive_pins, it is
+// dropped and said.
+message PulseDrive {
+  uint32 pin = 1;
+  bool first_level = 2;
+  repeated uint32 widths_ns = 3;
+}
+
+// A run of edges of a pin this consumer reads in GpioClaim.edge_pins, in
+// PulseDrive's shape: the pin reached first_level at
+// EmulatorMessage.sim_time_ns and toggled after each width. The level after
+// the last width is open: the next GpioEdges for the pin starts with the edge
+// that ends it, at its own time.
+//
+// The line is the pad as the chip drives it, as in GpioLevel, whatever moves
+// it: a block's waveform (RMT, LEDC, MCPWM) or the firmware's own writes, each
+// edge at its time. A run is sent once it holds 512 widths, at each ClockSync
+// heartbeat, at every pass while a consumer holds the clock (so before
+// TimeWaiting), and before a ChipReset: at most a heartbeat after its edges.
+message GpioEdges {
+  uint32 pin = 1;
+  bool first_level = 2;
+  repeated uint32 widths_ns = 3;
 }
 
 // What the chip transmitted on a port, sent on ROUTER to the consumer that is

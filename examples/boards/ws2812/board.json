@@ -1,0 +1,3 @@
+{ "parts": {
+    "strip": { "module": "ws2812.wasm", "pins": { "DIN": 8 } }
+} }

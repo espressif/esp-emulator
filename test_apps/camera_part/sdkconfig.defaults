@@ -1,0 +1,4 @@
+CONFIG_ESP_TASK_WDT_EN=n
+# The frame buffers live in external RAM; see main.c.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MEMTEST=n

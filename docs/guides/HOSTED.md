@@ -173,6 +173,11 @@ The bridge is configured via `--hosted=<spec>`, two forms:
 | `bridge:host:<path>` | P4 host | Connects to an existing slave socket. Required `--chip esp32p4`. |
 | `bridge:slave:<path>` | C5/C6 slave | Binds and listens on `<path>`. Required `--chip esp32c5` or `--chip esp32c6`. |
 
+On the host side, `--hosted-reset-gpio PIN` names the P4 GPIO wired to the
+slave's EN pin: when the firmware pulses it, the slave instance reboots. It
+must match the firmware's reset-GPIO Kconfig. `--hosted-reset-active-high`
+makes the pin active-high (default: active-low).
+
 The transport is a length-prefixed Unix `SOCK_STREAM` so it never drops
 bytes — even at high RPC throughput the queue grows on either side
 without packet loss.

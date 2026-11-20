@@ -174,6 +174,8 @@ bool test_esp_event_custom(void);
 /* --- test_net.c --- */
 #if SOC_WIFI_SUPPORTED
 bool test_wifi(void);
+/* A second station session with the CSI callback on. */
+bool test_wifi_csi(void);
 #endif
 #if SOC_EMAC_SUPPORTED
 bool test_eth(void);

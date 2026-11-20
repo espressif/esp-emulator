@@ -1,0 +1,3 @@
+{ "parts": {
+    "dht": { "module": "dht22.wasm", "pins": { "DATA": 5 } }
+} }

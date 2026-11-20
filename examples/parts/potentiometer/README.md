@@ -58,9 +58,9 @@ A board file for `esp-emu --cosim-board`, with the wiper on GPIO 3:
 ```
 
 The pin must be an ADC pad of the chip (its `adc_channel.h`): GPIO 3 is ADC1
-channel 3 on the C3 and C6 and channel 2 on the C5 and H2. A pad with no ADC
-channel, or any pad on a chip whose ADC the emulator does not model (P4, S3),
-is refused when the board loads.
+channel 3 on the C3 and C6 and channel 2 on the C5, H2 and S3; the P4's pads
+are GPIO 16-23 and 49-54, the S31's GPIO 42-57. A pad with no ADC channel is refused when the board
+loads.
 
 ## What is in it
 

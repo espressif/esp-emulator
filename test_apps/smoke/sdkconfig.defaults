@@ -6,3 +6,6 @@
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# test_wifi_csi: the Wi-Fi driver's CSI path (esp_wifi_set_csi_rx_cb).
+CONFIG_ESP_WIFI_CSI_ENABLED=y

@@ -82,6 +82,32 @@ async def main():
     ):
         if not hasattr(Controller, _name):
             setattr(Controller, _name, _ack_ok)
+
+    # Read RSSI: trouble-host's examples poll it once a second and give up
+    # the connection when it fails, which it does on a controller that
+    # answers "unknown command". Report a plausible -60 dBm.
+    def _read_rssi(self, command):
+        if hasattr(command, "connection_handle"):
+            handle = command.connection_handle
+        else:
+            handle = int.from_bytes(command.parameters[:2], "little")
+        data = bytes([0]) + handle.to_bytes(2, "little") + (-60 & 0xFF).to_bytes(1, "little")
+        generic = getattr(_hci, "HCI_GenericReturnParameters", None)
+        params = generic(data=data) if generic else data
+        sync = getattr(_hci, "HCI_SyncCommand", None)
+        if sync and isinstance(command, sync):
+            return params
+        self.send_hci_packet(
+            _hci.HCI_Command_Complete_Event(
+                num_hci_command_packets=1,
+                command_opcode=command.op_code,
+                return_parameters=params,
+            )
+        )
+        return None
+
+    if not hasattr(Controller, "on_hci_read_rssi_command"):
+        Controller.on_hci_read_rssi_command = _read_rssi
     # Bumble's LocalLink ACL routing uses sender_controller.random_address as source.
     # Set it to match the public address so the phone-controller can look up the
     # connection by peer address (which was the emu's public address).

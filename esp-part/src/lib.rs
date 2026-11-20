@@ -46,32 +46,35 @@ pub mod proto {
 
 pub use proto::{
     bus_request, claim, emulator_message::Payload, AnalogClaim, AnalogDrive, BusOp, BusReply, BusRequest,
-    Claim, EmulatorMessage, EnClaim, EnDrive, GpioClaim, GpioDrive, I2cClaim, I2cTransaction, PartConfig, PartState,
-    PwmState, Register, SpiClaim, SpiTransfer, UartClaim, UartRx, UartTx,
+    CamFrame, Claim, CsiClaim, CsiFormat, DvpClaim, DvpFormat, EmulatorMessage, EnClaim, EnDrive, GpioClaim,
+    GpioDrive, GpioEdges, I2cClaim, I2cTransaction, I2sClaim, I2sFormat, I2sIn, I2sOut, PartConfig, PartState,
+    PulseDrive, PwmState, Register, SpiClaim, SpiTransfer, UartClaim, UartRx, UartTx, VideoFormat,
 };
 
 /// What a part's `lib.rs` needs.
 pub mod prelude {
     pub use crate::proto::{
-        bus_request, claim, BusOp, BusReply, BusRequest, Claim, EmulatorMessage, GpioClaim, GpioDrive,
-        I2cClaim, I2cTransaction, PartConfig, PwmState, Register, SpiClaim, SpiTransfer, UartClaim,
+        bus_request, claim, BusOp, BusReply, BusRequest, Claim, CsiFormat, DvpFormat, EmulatorMessage, GpioClaim,
+        GpioDrive, I2cClaim, I2cTransaction, I2sClaim, I2sFormat, PartConfig, PwmState, Register, SpiClaim,
+        SpiTransfer, UartClaim, VideoFormat,
     };
     pub use crate::{
-        analog, drive, drive_en, drives, en, hold, reads_pwm, serial, set_value, transmit, watches, Device, State,
+        analog, audio, camera, csi, drive, drive_en, drives, dvp, en, hold, i2s, play, reads_edges, reads_pwm,
+        samples, serial, set_value, transmit, watches, Device, State,
     };
 }
 
 /// The claim to drive `pins` (bit N for GPIO N): the emulator refuses them
 /// to every other part.
 pub fn drives(pins: u64) -> Claim {
-    Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: pins, watch_pins: 0, pwm_pins: 0 })) }
+    Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: pins, watch_pins: 0, pwm_pins: 0, edge_pins: 0 })) }
 }
 
 /// The claim to be told every transition of `pins`, each at its own time,
 /// where a pin nobody watches arrives as its level once a tick. Not
 /// exclusive, and a pin the part drives may be watched too.
 pub fn watches(pins: u64) -> Claim {
-    Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: 0, watch_pins: pins, pwm_pins: 0 })) }
+    Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: 0, watch_pins: pins, pwm_pins: 0, edge_pins: 0 })) }
 }
 
 /// The claim to be told the waveform a PWM block puts on `pins` (bit N for
@@ -79,7 +82,16 @@ pub fn watches(pins: u64) -> Claim {
 /// exclusive. What a servo, a buzzer, a dimmed LED or a motor driver claims;
 /// the waveform arrives at [`Device::on_pwm`].
 pub fn reads_pwm(pins: u64) -> Claim {
-    Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: 0, watch_pins: 0, pwm_pins: pins })) }
+    Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: 0, watch_pins: 0, pwm_pins: pins, edge_pins: 0 })) }
+}
+
+/// The claim to be told the edges of `pins` (bit N for GPIO N) in runs, each
+/// a first level and the widths after it, rather than a level at a time. Not
+/// exclusive. What a WS2812 strip or a reader of an IR LED claims; the runs
+/// arrive at [`Device::on_edges`], and the part's buffer must hold 2,581
+/// bytes (`export_part!(Device, buffer = 4096)`).
+pub fn reads_edges(pins: u64) -> Claim {
+    Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: 0, watch_pins: 0, pwm_pins: 0, edge_pins: pins })) }
 }
 
 /// The claim to be the serial device whose own TX pin the board wired to pad
@@ -105,6 +117,41 @@ pub fn en() -> Claim {
     Claim { what: Some(claim::What::En(EnClaim {})) }
 }
 
+/// The claim to be the audio device whose own data input the board wired to
+/// pad `din` (an amplifier's DIN: the chip transmits there) and whose data
+/// output to pad `dout` (a microphone's SD: the chip receives there). The
+/// contract names the pads from the chip's end, so the swap is made here, as
+/// in [`serial`]. A pin the board left unconnected stays out; with neither,
+/// the emulator refuses the claim and says so.
+pub fn i2s(din: Option<u32>, dout: Option<u32>) -> Claim {
+    Claim { what: Some(claim::What::I2s(I2sClaim { dout_pin: din, din_pin: dout, ..Default::default() })) }
+}
+
+/// The claim to be the DVP camera sensor whose PCLK, VSYNC and D0..D7 the
+/// board wired to these pads, and its HREF and XCLK pins where it wired them.
+/// The sensor is on the receiver's bus once the firmware routes the
+/// receiver's pixel clock to `pclk`; its formats arrive at
+/// [`Device::on_dvp_format`]. Its SCCB address is an [`I2cClaim`] beside it.
+pub fn dvp(pclk: u32, vsync: u32, data: [u32; 8], href: Option<u32>, xclk: Option<u32>) -> Claim {
+    Claim {
+        what: Some(claim::What::Dvp(DvpClaim {
+            pclk_pin: pclk,
+            vsync_pin: vsync,
+            de_pin: href,
+            hsync_pin: None,
+            xclk_pin: xclk,
+            data_pins: data.to_vec(),
+        })),
+    }
+}
+
+/// The claim to be the MIPI CSI camera sensor. The chip has one CSI host and
+/// its lanes are dedicated pads, so it names none; the formats arrive at
+/// [`Device::on_csi_format`].
+pub fn csi() -> Claim {
+    Claim { what: Some(claim::What::Csi(CsiClaim {})) }
+}
+
 /// The component a part models. Each method is one call of
 /// `proto/PART_ABI.md`, with the bytes already decoded; the ones a device
 /// has no use for are left at their defaults.
@@ -122,10 +169,12 @@ pub trait Device: Default {
 
     /// Whether the device takes one-way messages, `part_on_message`, as
     /// [`ON_BUS`](Self::ON_BUS) is for `part_on_bus`: `true` on a device that
-    /// claims a serial line ([`serial`]), reads a pin as PWM ([`reads_pwm`])
-    /// or follows the chip's EN pin, and implements the method for it:
-    /// [`on_uart`](Self::on_uart), [`on_pwm`](Self::on_pwm) or
-    /// [`on_en`](Self::on_en). Left `false`,
+    /// claims a serial line ([`serial`]) and implements
+    /// [`on_uart`](Self::on_uart), reads a pin as PWM ([`reads_pwm`]) and
+    /// implements [`on_pwm`](Self::on_pwm), follows the chip's EN pin and
+    /// implements [`on_en`](Self::on_en), or claims an I2S data pad
+    /// ([`i2s`]) and implements [`on_i2s_format`](Self::on_i2s_format) and, if
+    /// it listens, [`on_i2s_out`](Self::on_i2s_out). Left `false`,
     /// `part_on_message` decodes nothing, which keeps the message decoder out
     /// of a part that is sent no messages.
     const ON_MESSAGE: bool = false;
@@ -151,9 +200,11 @@ pub trait Device: Default {
 
     /// What to tell the emulator now, if anything: a pin to drive, usually
     /// ([`drive`]). Asked after every frame and every interaction, with the
-    /// emulated time. A device that acts later waits for `now_ns` to reach
-    /// its moment, or speaks now with a later `sim_time_ns` and lets the
-    /// emulator schedule it (`proto/PART_ABI.md`, "Two ways to act at a time").
+    /// emulated time, and again with the same time until it returns `None`
+    /// (at most 256 times in a row). A device that acts later waits for
+    /// `now_ns` to reach its moment, or speaks now with a later `sim_time_ns`
+    /// and lets the emulator schedule it (`proto/PART_ABI.md`, "Two ways to
+    /// act at a time").
     fn poll(&mut self, _now_ns: u64) -> Option<EmulatorMessage> {
         None
     }
@@ -180,10 +231,42 @@ pub trait Device: Default {
     /// it: nothing is said again while it stays.
     fn on_pwm(&mut self, _state: &PwmState) {}
 
+    /// A run of edges of a pin the part reads as edges: the pin reached
+    /// `first_level` at `at_ns` and toggled after each of `widths_ns`. The
+    /// level after the last is open until the next run, which starts with
+    /// the edge that ends it. A run comes at most a heartbeat after its
+    /// edges, and [`on_pins`](Self::on_pins) follows it with the pin's last
+    /// level.
+    fn on_edges(&mut self, _pin: u32, _first_level: bool, _widths_ns: &[u32], _at_ns: u64) {}
+
     /// The chip's EN pin moved, whoever moved it: `false` and the chip is
     /// held in reset from `at_ns`, `true` and the last holder let go, the
     /// chip reset following. A part that pulls EN sees its own pulse here.
     fn on_en(&mut self, _level: bool, _at_ns: u64) {}
+
+    /// The layout of one direction of the I2S data pads the device claimed
+    /// ([`audio::Frame::of`] reads it), once the firmware has started it and
+    /// whenever it changes. `format.receive` is `false` for what the chip
+    /// sends ([`on_i2s_out`](Self::on_i2s_out)) and `true` for what it
+    /// expects from the device ([`samples`]). `at_ns` is when it took
+    /// effect: a device that supplies samples counts its stream from there.
+    fn on_i2s_format(&mut self, _format: &I2sFormat, _at_ns: u64) {}
+
+    /// Samples the chip clocked out on the data pad the device listens on,
+    /// in the transmit format's layout, at most 4096 bytes at a time.
+    /// `at_ns` is when the last of them had been clocked out.
+    fn on_i2s_out(&mut self, _pcm: &[u8], _at_ns: u64) {}
+
+    /// What the DVP receiver the device is the sensor for ([`dvp`]) looks
+    /// like, when it changes: whether it captures, its capture session, and
+    /// the clock at the sensor's XCLK pad. Every field clear when the sensor
+    /// leaves the bus. The frames go out from [`poll`](Self::poll) as
+    /// [`camera::Stream`] cuts them.
+    fn on_dvp_format(&mut self, _format: &DvpFormat, _at_ns: u64) {}
+
+    /// The same for the MIPI CSI host ([`csi`]): whether it captures, the
+    /// data lanes it listens on, and its capture session.
+    fn on_csi_format(&mut self, _format: &CsiFormat, _at_ns: u64) {}
 
     /// Somebody interacted with the part: `"press"`, `"warmer"`,
     /// `"set:temperature=30.5"` ([`set_value`]). The names are the part's
@@ -196,6 +279,58 @@ pub trait Device: Default {
     /// show.
     fn state(&self) -> Option<State> {
         None
+    }
+
+    /// What the part draws, for a page or a script drawing it: bytes in a
+    /// layout the part states (a screen's size, its pixel format). `None`
+    /// when nothing is new since the last call, which a still screen answers
+    /// at no cost, and for a part that draws nothing. The answer must fit
+    /// the buffer [`export_part!`] gives the part.
+    fn render(&mut self) -> Option<&[u8]> {
+        None
+    }
+
+    /// What the device asks to be shown, for whatever feeds it pictures: a
+    /// size, a fourcc and how many a second it sends; `None` for nothing
+    /// now. Asked before each picture, since a camera's registers decide it
+    /// and the firmware reprograms them. Exported only by
+    /// `export_part!(Device, buffer = N, sees)`. [`camera::Sensor`] answers
+    /// it for a camera.
+    fn video_format(&mut self) -> Option<VideoFormat> {
+        None
+    }
+
+    /// A picture the device is shown, whole, at the size
+    /// [`video_format`](Self::video_format) asked for: RGB888, or a JPEG
+    /// file for a JPEG mode (`proto/PART_ABI.md`). A camera keeps it and
+    /// sends it as its frames from [`poll`](Self::poll). `Err` says why it
+    /// did not keep it, and the host reports that.
+    fn video_in(&mut self, _picture: &[u8]) -> Result<(), String> {
+        Err("it is shown nothing".to_string())
+    }
+
+    /// The sound the part makes, for somebody to hear: mono 16-bit
+    /// little-endian samples at [`audio_rate`](Self::audio_rate)`(false)`,
+    /// written into `out` from its start. Returns how many bytes it wrote:
+    /// whole samples, at most `out.len()`; 0 for nothing new. The device
+    /// keeps what did not fit for the next call, a bounded amount, the
+    /// oldest dropped. Called only on a device exported with the `sounds`
+    /// marker ([`export_part!`]).
+    fn audio_out(&mut self, _out: &mut [u8]) -> usize {
+        0
+    }
+
+    /// A sound somebody makes at the part: mono 16-bit little-endian samples
+    /// at [`audio_rate`](Self::audio_rate)`(true)`, in order, a longer sound
+    /// in several calls. Called only on a device exported with the `hears`
+    /// marker.
+    fn audio_in(&mut self, _pcm: &[u8]) {}
+
+    /// The samples a second the part makes its sound at (`receive` false)
+    /// or hears at (true); 0 while it does not know, such as before the
+    /// firmware has started its I2S unit.
+    fn audio_rate(&self, _receive: bool) -> u32 {
+        0
     }
 }
 
@@ -227,6 +362,17 @@ pub fn drive(pin: u32, level: bool, at_ns: u64) -> EmulatorMessage {
     EmulatorMessage { sim_time_ns: at_ns, payload: Some(Payload::GpioDrive(GpioDrive { pin, level })) }
 }
 
+/// A waveform on `pin` from `at_ns`, as [`Device::poll`] returns it: a
+/// `PulseDrive` that puts `first_level` on the pin, toggles it after each of
+/// `widths_ns` and leaves it at the level after the last one. Stamped with a
+/// time that has passed, it starts at once with every width kept. At most
+/// 512 widths; a longer waveform is several, each stamped where the one
+/// before it ends (`PART_ABI.md`, "Playing a waveform").
+pub fn play(pin: u32, first_level: bool, widths_ns: &[u32], at_ns: u64) -> EmulatorMessage {
+    let wave = PulseDrive { pin, first_level, widths_ns: widths_ns.to_vec() };
+    EmulatorMessage { sim_time_ns: at_ns, payload: Some(Payload::PulseDrive(wave)) }
+}
+
 /// An `EnDrive` at `at_ns`, as [`Device::poll`] returns it: `false` pulls
 /// the chip's EN pin low and holds the chip in reset while emulated time goes
 /// on, `true` lets go, and the chip then boots as from power-on. Needs the
@@ -246,6 +392,526 @@ pub fn hold(pin: u32, millivolts: u32, at_ns: u64) -> EmulatorMessage {
 /// [`Device::poll`] returns it. The emulator takes it when it arrives.
 pub fn transmit(data: &[u8], at_ns: u64) -> EmulatorMessage {
     EmulatorMessage { sim_time_ns: at_ns, payload: Some(Payload::UartRx(UartRx { data: data.to_vec() })) }
+}
+
+/// Samples for the chip's receiver, `pcm`, in the receive format's layout,
+/// at `at_ns`, as [`Device::poll`] returns them. The emulator takes them when
+/// they arrive and the receiver plays them at the format's rate, so a device
+/// stays a little ahead of the time it is polled with (`proto/PART_ABI.md`).
+pub fn samples(pcm: &[u8], at_ns: u64) -> EmulatorMessage {
+    EmulatorMessage { sim_time_ns: at_ns, payload: Some(Payload::I2sIn(I2sIn { pcm: pcm.to_vec() })) }
+}
+
+/// The wire layout of I2S samples, as an [`I2sFormat`] gives it.
+pub mod audio {
+    use crate::I2sFormat;
+
+    /// One frame of I2S: `slots` containers of `width` bytes each,
+    /// interleaved, little-endian, `rate_hz` frames a second. A 24-bit
+    /// sample is three bytes.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Frame {
+        pub rate_hz: u32,
+        pub slots: usize,
+        pub width: usize,
+    }
+
+    impl Frame {
+        /// The frame `format` describes; `None` for one with no rate, no
+        /// slots, or a container that is not 8, 16, 24 or 32 bits.
+        pub fn of(format: &I2sFormat) -> Option<Frame> {
+            let width = format.bits as usize / 8;
+            let ok = format.sample_rate_hz != 0 && format.channels != 0 && format.bits % 8 == 0;
+            (ok && (1..=4).contains(&width)).then_some(Frame {
+                rate_hz: format.sample_rate_hz,
+                slots: format.channels as usize,
+                width,
+            })
+        }
+
+        /// Bytes in one frame.
+        pub fn bytes(&self) -> usize {
+            self.slots * self.width
+        }
+
+        /// Whole frames in `ns` nanoseconds.
+        pub fn frames_in(&self, ns: u64) -> u64 {
+            (u128::from(ns) * u128::from(self.rate_hz) / 1_000_000_000) as u64
+        }
+
+        /// The sample in slot `slot` of `frame`, left-aligned in 32 bits: a
+        /// 16-bit sample is its top half.
+        pub fn read(&self, frame: &[u8], slot: usize) -> i32 {
+            let at = slot * self.width;
+            let bytes = &frame[at..at + self.width];
+            let raw = bytes.iter().rev().fold(0u32, |v, &b| v << 8 | u32::from(b));
+            (raw << (32 - 8 * self.width)) as i32
+        }
+
+        /// Put `sample`, left-aligned in 32 bits, in slot `slot` of `frame`:
+        /// its top `width` bytes.
+        pub fn write(&self, frame: &mut [u8], slot: usize, sample: i32) {
+            let at = slot * self.width;
+            let raw = (sample as u32) >> (32 - 8 * self.width);
+            for (i, b) in frame[at..at + self.width].iter_mut().enumerate() {
+                *b = (raw >> (8 * i)) as u8;
+            }
+        }
+    }
+}
+
+/// A camera sensor's side of `proto/PART_ABI.md` ("`DvpFormat` and
+/// `CsiFormat`"): its picture's layout, colour bars to send, and the stream
+/// that paces its frames and cuts them into pieces.
+pub mod camera {
+    use std::sync::Arc;
+
+    use crate::{set_value, CamFrame, EmulatorMessage, Payload, State, VideoFormat};
+
+    /// A fourcc as `CamFrame.fourcc` takes it: four ASCII characters in
+    /// written order, little-endian.
+    pub const fn fourcc(name: &[u8; 4]) -> u32 {
+        u32::from_le_bytes(*name)
+    }
+
+    /// A frame's layout: its size and its fourcc.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Mode {
+        pub width: u32,
+        pub height: u32,
+        pub fourcc: u32,
+    }
+
+    impl Mode {
+        /// Bytes in one frame; `None` for a fourcc with no fixed size (JPEG)
+        /// or none this module knows.
+        pub fn frame_bytes(&self) -> Option<usize> {
+            bytes_per_pixel(self.fourcc).map(|n| n * self.width as usize * self.height as usize)
+        }
+    }
+
+    /// The Bayer cell order of a mosaic fourcc, top-left first, and whether
+    /// its samples are ten bits (a little-endian u16 each) rather than eight.
+    fn bayer(fourcc: u32) -> Option<(&'static [u8; 4], bool)> {
+        Some(match &fourcc.to_le_bytes() {
+            b"BA81" => (b"BGGR", false),
+            b"GBRG" => (b"GBRG", false),
+            b"GRBG" => (b"GRBG", false),
+            b"RGGB" => (b"RGGB", false),
+            b"BG10" => (b"BGGR", true),
+            b"GB10" => (b"GBRG", true),
+            b"BA10" => (b"GRBG", true),
+            b"RG10" => (b"RGGB", true),
+            _ => return None,
+        })
+    }
+
+    fn bytes_per_pixel(fourcc: u32) -> Option<usize> {
+        match &fourcc.to_le_bytes() {
+            b"RGBP" | b"RGBR" | b"UYVY" | b"YUYV" | b"YVYU" | b"VYUY" => Some(2),
+            b"GREY" => Some(1),
+            _ => bayer(fourcc).map(|(_, ten)| if ten { 2 } else { 1 }),
+        }
+    }
+
+    /// A sensor's colour-bar test pattern, left to right: white, yellow,
+    /// cyan, green, magenta, red, blue, black.
+    pub const BARS: [[u8; 3]; 8] =
+        [[255, 255, 255], [255, 255, 0], [0, 255, 255], [0, 255, 0], [255, 0, 255], [255, 0, 0], [0, 0, 255], [0, 0, 0]];
+
+    /// The bar column `x` of a `width`-wide picture is in.
+    pub fn bar_at(x: u32, width: u32) -> [u8; 3] {
+        BARS[(x as usize * 8 / width.max(1) as usize).min(7)]
+    }
+
+    /// BT.601 luma and chroma, limited range: Y, U (Cb), V (Cr).
+    pub fn yuv([r, g, b]: [u8; 3]) -> [u8; 3] {
+        let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
+        let y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
+        let u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
+        let v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
+        [y as u8, u as u8, v as u8]
+    }
+
+    /// RGB565 of a colour.
+    pub fn rgb565([r, g, b]: [u8; 3]) -> u16 {
+        (u16::from(r) >> 3) << 11 | (u16::from(g) >> 2) << 5 | u16::from(b) >> 3
+    }
+
+    /// The colour bars in `mode`; `None` for a fourcc with no raw layout.
+    /// YUV422 takes each pixel's chroma from its own colour; a mosaic takes
+    /// each cell's colour channel, ten-bit samples widened as `v << 2 | v >> 6`.
+    pub fn bars(mode: &Mode) -> Option<Vec<u8>> {
+        let len = mode.frame_bytes()?;
+        let (w, h) = (mode.width, mode.height);
+        let mut out = Vec::with_capacity(len);
+        let name = mode.fourcc.to_le_bytes();
+        for y in 0..h {
+            for x in 0..w {
+                let c = bar_at(x, w);
+                match &name {
+                    b"RGBP" => out.extend(rgb565(c).to_be_bytes()),
+                    b"RGBR" => out.extend(rgb565(c).to_le_bytes()),
+                    b"GREY" => out.push(yuv(c)[0]),
+                    b"UYVY" | b"YUYV" | b"YVYU" | b"VYUY" => {
+                        let [luma, u, v] = yuv(c);
+                        let odd = x & 1 == 1;
+                        let chroma = match (&name, odd) {
+                            (b"UYVY" | b"YUYV", false) | (b"YVYU" | b"VYUY", true) => u,
+                            _ => v,
+                        };
+                        if matches!(&name, b"UYVY" | b"VYUY") {
+                            out.extend([chroma, luma]);
+                        } else {
+                            out.extend([luma, chroma]);
+                        }
+                    }
+                    _ => {
+                        let (cells, ten) = bayer(mode.fourcc)?;
+                        let channel = match cells[((y & 1) * 2 + (x & 1)) as usize] {
+                            b'R' => 0,
+                            b'G' => 1,
+                            _ => 2,
+                        };
+                        let v = c[channel];
+                        if ten {
+                            out.extend((u16::from(v) << 2 | u16::from(v) >> 6).to_le_bytes());
+                        } else {
+                            out.push(v);
+                        }
+                    }
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// A JPEG's own colour space, full-range BT.601 (JFIF): Y, Cb, Cr.
+    fn ycc([r, g, b]: [u8; 3]) -> [u8; 3] {
+        let (r, g, b) = (f64::from(r), f64::from(g), f64::from(b));
+        let y = 0.299 * r + 0.587 * g + 0.114 * b;
+        let cb = 128.0 - 0.168_736 * r - 0.331_264 * g + 0.5 * b;
+        let cr = 128.0 + 0.5 * r - 0.418_688 * g - 0.081_312 * b;
+        [y, cb, cr].map(|v| v.round().clamp(0.0, 255.0) as u8)
+    }
+
+    /// `rgb`, `width` × `height` pixels of RGB888, in `mode`'s layout: what
+    /// a sensor in that mode would send of that scene. YUV422 and grey take
+    /// a JPEG's own colour space with each pixel pair's chroma averaged, as
+    /// the emulator's `--camera-frames` makes them from a JPEG; RGB565 keeps
+    /// the top bits of each channel; a mosaic takes each cell's channel,
+    /// ten-bit samples widened as `v << 2 | v >> 6`. `None` for JPEG, a
+    /// fourcc with no raw layout, or `rgb` not that size.
+    pub fn convert(rgb: &[u8], mode: &Mode) -> Option<Vec<u8>> {
+        let (w, h) = (mode.width as usize, mode.height as usize);
+        if rgb.len() != w * h * 3 {
+            return None;
+        }
+        let px = |x: usize, y: usize| {
+            let i = 3 * (y * w + x);
+            [rgb[i], rgb[i + 1], rgb[i + 2]]
+        };
+        let name = mode.fourcc.to_le_bytes();
+        let mut out = Vec::with_capacity(mode.frame_bytes()?);
+        for y in 0..h {
+            for x in 0..w {
+                let c = px(x, y);
+                match &name {
+                    b"RGBP" => out.extend(rgb565(c).to_be_bytes()),
+                    b"RGBR" => out.extend(rgb565(c).to_le_bytes()),
+                    b"GREY" => out.push(ycc(c)[0]),
+                    b"UYVY" | b"YUYV" | b"YVYU" | b"VYUY" => {
+                        if x % 2 == 1 {
+                            continue;
+                        }
+                        let [y0, u0, v0] = ycc(c);
+                        let [y1, u1, v1] = ycc(px((x + 1).min(w - 1), y));
+                        let (u, v) = (((u16::from(u0) + u16::from(u1)) / 2) as u8, ((u16::from(v0) + u16::from(v1)) / 2) as u8);
+                        out.extend(match &name {
+                            b"UYVY" => [u, y0, v, y1],
+                            b"YUYV" => [y0, u, y1, v],
+                            b"YVYU" => [y0, v, y1, u],
+                            _ => [v, y0, u, y1],
+                        });
+                    }
+                    _ => {
+                        let (cells, ten) = bayer(mode.fourcc)?;
+                        let channel = match cells[(y & 1) * 2 + (x & 1)] {
+                            b'R' => 0,
+                            b'G' => 1,
+                            _ => 2,
+                        };
+                        let v = c[channel];
+                        if ten {
+                            out.extend((u16::from(v) << 2 | u16::from(v) >> 6).to_le_bytes());
+                        } else {
+                            out.push(v);
+                        }
+                    }
+                }
+            }
+        }
+        (out.len() == mode.frame_bytes()?).then_some(out)
+    }
+
+    /// Pixels a piece may carry in a part whose buffer is `buffer` bytes: the
+    /// rest holds the `EmulatorMessage` around them.
+    pub const fn piece_for(buffer: usize) -> usize {
+        buffer.saturating_sub(64)
+    }
+
+    struct Sending {
+        frame: Arc<[u8]>,
+        at: usize,
+        mode: Mode,
+        start_ns: u64,
+    }
+
+    /// A sensor's frames: when the next one starts, and the pieces of the
+    /// one being sent. A device tells it each format and asks it for the
+    /// next piece from [`Device::poll`](crate::Device::poll), with the frame
+    /// period it runs at; the rules are `proto/PART_ABI.md`'s.
+    #[derive(Default)]
+    pub struct Stream {
+        capturing: bool,
+        session: u32,
+        /// When the next frame starts.
+        next_ns: u64,
+        /// The time of the last poll, to see the clock go back at a reset.
+        last_ns: u64,
+        sending: Option<Sending>,
+        sent: u64,
+    }
+
+    impl Stream {
+        /// The receiver's format: whether a frame sent now is received, its
+        /// capture session, and when that took effect. A new session, or a
+        /// start, counts from `at_ns`; a stop drops what is not sent.
+        pub fn format(&mut self, capturing: bool, session: u32, at_ns: u64, period_ns: u64) {
+            if !capturing {
+                self.capturing = false;
+                self.sending = None;
+                return;
+            }
+            if !self.capturing || session != self.session {
+                self.sending = None;
+                self.next_ns = at_ns + period_ns;
+            }
+            self.capturing = true;
+            self.session = session;
+        }
+
+        /// Whether the receiver captures.
+        pub fn capturing(&self) -> bool {
+            self.capturing
+        }
+
+        /// Frames sent whole.
+        pub fn sent(&self) -> u64 {
+            self.sent
+        }
+
+        /// The next piece to send at `now_ns`, at most `piece` bytes of
+        /// pixels, one frame every `period_ns`. `frame` makes the next frame
+        /// when one is due; `None` from it sends nothing. A frame starts no
+        /// sooner than a period after the one before, and is sent no earlier
+        /// than a period before it starts; past its start by more than a
+        /// period, the stream starts again from `now_ns`.
+        pub fn poll(
+            &mut self,
+            now_ns: u64,
+            period_ns: u64,
+            piece: usize,
+            frame: impl FnOnce() -> Option<(Arc<[u8]>, Mode)>,
+        ) -> Option<EmulatorMessage> {
+            if now_ns < self.last_ns {
+                // The chip reset: nothing until the next capturing format.
+                self.capturing = false;
+                self.sending = None;
+            }
+            self.last_ns = now_ns;
+            if !self.capturing {
+                return None;
+            }
+            if self.sending.is_none() {
+                if now_ns.saturating_add(period_ns) < self.next_ns {
+                    return None;
+                }
+                if now_ns > self.next_ns.saturating_add(period_ns) {
+                    self.next_ns = now_ns + period_ns;
+                }
+                let (bytes, mode) = frame()?;
+                self.sending = Some(Sending { frame: bytes, at: 0, mode, start_ns: self.next_ns });
+                self.next_ns += period_ns;
+            }
+            let s = self.sending.as_mut()?;
+            let end = (s.at + piece.max(1)).min(s.frame.len());
+            let data = s.frame[s.at..end].to_vec();
+            s.at = end;
+            if end < s.frame.len() {
+                let f = CamFrame { data, ..Default::default() };
+                return Some(EmulatorMessage { sim_time_ns: 0, payload: Some(Payload::CamFrame(f)) });
+            }
+            let (mode, start_ns) = (s.mode, s.start_ns);
+            self.sending = None;
+            self.sent += 1;
+            let f = CamFrame {
+                data,
+                end_of_frame: true,
+                width: mode.width,
+                height: mode.height,
+                fourcc: mode.fourcc,
+                session: self.session,
+            };
+            Some(EmulatorMessage { sim_time_ns: start_ns, payload: Some(Payload::CamFrame(f)) })
+        }
+    }
+
+    /// The most `set:fps=` takes.
+    pub const MAX_FPS: f64 = 60.0;
+
+    /// What every camera sensor part does the same way, whatever its
+    /// registers: its frames, paced by a [`Stream`]; its rate, the one its
+    /// registers give unless `set:fps=` overrides it; and its colour bars,
+    /// made once per mode. A device keeps its registers and decodes its
+    /// [`Mode`] and rate from them, and hands both in.
+    #[derive(Default)]
+    pub struct Sensor {
+        stream: Stream,
+        /// `set:fps=`, over the rate the registers give.
+        fps: Option<f64>,
+        /// The time of the last poll: when a change the firmware makes
+        /// between polls counts from.
+        last_ns: u64,
+        bars: Option<(Mode, Arc<[u8]>)>,
+        /// The mode it last asked to be shown a picture in.
+        asked: Option<Mode>,
+        /// The last picture it was shown, in its sensor's layout, and the
+        /// mode it is for: sent in place of the bars while that mode is on.
+        shown: Option<(Mode, Arc<[u8]>)>,
+    }
+
+    impl Sensor {
+        /// The rate it runs at: `set:fps=` if given, else `native`.
+        pub fn fps(&self, native: f64) -> f64 {
+            self.fps.unwrap_or(native)
+        }
+
+        fn period_ns(&self, native: f64) -> u64 {
+            (1e9 / self.fps(native).max(1e-3)) as u64
+        }
+
+        /// The time of the last poll.
+        pub fn now(&self) -> u64 {
+            self.last_ns
+        }
+
+        /// Whether the receiver takes frames now, as [`Stream::format`].
+        pub fn format(&mut self, sending: bool, session: u32, at_ns: u64, native_fps: f64) {
+            let period = self.period_ns(native_fps);
+            self.stream.format(sending, session, at_ns, period);
+        }
+
+        /// The next piece, at most `buffer`'s [`piece_for`]: the bars in
+        /// `mode`, a frame a period. Nothing without a mode.
+        pub fn poll(&mut self, now_ns: u64, native_fps: f64, buffer: usize, mode: Option<Mode>) -> Option<EmulatorMessage> {
+            self.last_ns = now_ns;
+            let period = self.period_ns(native_fps);
+            let mut stream = std::mem::take(&mut self.stream);
+            let msg = stream.poll(now_ns, period, piece_for(buffer), || self.frame(mode?));
+            self.stream = stream;
+            msg
+        }
+
+        /// The frame in `mode`, shared rather than copied: the picture it
+        /// was shown for that mode, else the bars.
+        fn frame(&mut self, mode: Mode) -> Option<(Arc<[u8]>, Mode)> {
+            if let Some((m, picture)) = &self.shown {
+                if *m == mode {
+                    return Some((Arc::clone(picture), mode));
+                }
+            }
+            if self.bars.as_ref().is_none_or(|(m, _)| *m != mode) {
+                self.bars = Some((mode, bars(&mode)?.into()));
+            }
+            self.bars.as_ref().map(|(m, b)| (Arc::clone(b), *m))
+        }
+
+        /// `set:fps=<n>`, from 1 to [`MAX_FPS`]; whether `input` was it.
+        pub fn on_input(&mut self, input: &str) -> bool {
+            match set_value(input) {
+                Some(("fps", fps)) => {
+                    self.fps = Some(fps.clamp(1.0, MAX_FPS));
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        /// What to show it ([`Device::video_format`](crate::Device::video_format)):
+        /// a picture of `mode`'s size, at its rate. `None` without a mode,
+        /// or when the picture would not fit a `buffer` of that many bytes,
+        /// so a feeder is never asked for one the part cannot take.
+        pub fn video_format(&mut self, mode: Option<Mode>, native_fps: f64, buffer: usize) -> Option<VideoFormat> {
+            let m = mode?;
+            let jpeg = m.fourcc == fourcc(b"JPEG");
+            if !jpeg && (m.width as usize) * (m.height as usize) * 3 > buffer {
+                self.asked = None;
+                return None;
+            }
+            self.asked = Some(m);
+            Some(VideoFormat { width: m.width, height: m.height, fourcc: m.fourcc, fps: self.fps(native_fps).round() as u32 })
+        }
+
+        /// A picture it is shown ([`Device::video_in`](crate::Device::video_in)),
+        /// kept for `mode` and sent as its frames while that mode is on:
+        /// RGB888 of its size, made into the mode's layout; a JPEG in a JPEG
+        /// mode; or the mode's own layout, as it is. Refused, and why, when it
+        /// is none of these, or when the firmware has changed the mode since
+        /// it was last asked for one.
+        pub fn video_in(&mut self, mode: Option<Mode>, picture: &[u8]) -> Result<(), String> {
+            let m = mode.ok_or("the firmware has not programmed an output yet")?;
+            if self.asked.is_some_and(|a| a != m) {
+                return Err("the firmware changed the mode since it was asked".to_string());
+            }
+            let kept: Vec<u8> = if m.fourcc == fourcc(b"JPEG") {
+                let whole = picture.starts_with(&[0xFF, 0xD8]) && picture.ends_with(&[0xFF, 0xD9]);
+                if !whole {
+                    return Err("not a JPEG: a JPEG mode is shown a JPEG file".to_string());
+                }
+                picture.to_vec()
+            } else if let Some(raw) = convert(picture, &m) {
+                raw
+            } else if m.frame_bytes() == Some(picture.len()) {
+                picture.to_vec()
+            } else {
+                return Err(format!(
+                    "a {}-byte picture is not {}x{} RGB888 ({} bytes)",
+                    picture.len(),
+                    m.width,
+                    m.height,
+                    m.width as usize * m.height as usize * 3
+                ));
+            };
+            self.shown = Some((m, kept.into()));
+            Ok(())
+        }
+
+        /// What every sensor shows: the format and size programmed (`none`
+        /// and 0 before), its rate, whether the receiver captures, the
+        /// frames sent and the size of the picture it was shown.
+        pub fn state(&self, mode: Option<Mode>, native_fps: f64) -> State {
+            let format = mode.map_or("none".to_string(), |m| String::from_utf8_lossy(&m.fourcc.to_le_bytes()).into_owned());
+            State::new()
+                .set("format", format)
+                .set("width", mode.map_or(0, |m| m.width))
+                .set("height", mode.map_or(0, |m| m.height))
+                .set("fps", self.fps(native_fps))
+                .set("capturing", self.stream.capturing())
+                .set("frames", self.stream.sent())
+                .set("shown", self.shown.as_ref().map_or(0, |(_, p)| p.len()))
+        }
+    }
 }
 
 /// `set:<name>=<value>`, the interaction that puts an exact value in one
@@ -268,13 +934,16 @@ pub fn set_value(input: &str) -> Option<(&str, f64)> {
 /// exchange bytes through. [`export_part!`] holds one in a static and calls
 /// these from the exported functions; a test can drive one directly.
 pub struct Part<D: Device, const N: usize> {
-    pub buffer: [u8; N],
+    /// On the heap: built on the stack, a buffer for a picture (a megabyte)
+    /// would overflow a module's stack, which is a megabyte too.
+    pub buffer: Box<[u8; N]>,
     pub device: D,
 }
 
 impl<D: Device, const N: usize> Default for Part<D, N> {
     fn default() -> Self {
-        Self { buffer: [0; N], device: D::default() }
+        let buffer = vec![0; N].into_boxed_slice().try_into().expect("N bytes");
+        Self { buffer, device: D::default() }
     }
 }
 
@@ -299,7 +968,7 @@ impl<D: Device, const N: usize> Part<D, N> {
     /// `part_configure`: the first `len` bytes of the buffer are a
     /// `PartConfig`. One that does not decode leaves the device unwired.
     pub fn configure(&mut self, len: i32) {
-        if let Ok(config) = PartConfig::decode(Self::frame(&self.buffer, len)) {
+        if let Ok(config) = PartConfig::decode(Self::frame(&self.buffer[..], len)) {
             self.device.configure(&config);
         }
     }
@@ -321,7 +990,7 @@ impl<D: Device, const N: usize> Part<D, N> {
         if !D::ON_BUS {
             return 0;
         }
-        let Ok(request) = BusRequest::decode(Self::frame(&self.buffer, len)) else { return 0 };
+        let Ok(request) = BusRequest::decode(Self::frame(&self.buffer[..], len)) else { return 0 };
         match self.device.on_bus(&request) {
             Some(reply) => self.write(&reply),
             None => 0,
@@ -336,11 +1005,16 @@ impl<D: Device, const N: usize> Part<D, N> {
         if !D::ON_MESSAGE {
             return;
         }
-        let Ok(msg) = EmulatorMessage::decode(Self::frame(&self.buffer, len)) else { return };
+        let Ok(msg) = EmulatorMessage::decode(Self::frame(&self.buffer[..], len)) else { return };
         match msg.payload {
             Some(Payload::UartTx(tx)) => self.device.on_uart(&tx.data),
             Some(Payload::PwmState(state)) => self.device.on_pwm(&state),
+            Some(Payload::GpioEdges(e)) => self.device.on_edges(e.pin, e.first_level, &e.widths_ns, msg.sim_time_ns),
             Some(Payload::EnLevel(e)) => self.device.on_en(e.level, msg.sim_time_ns),
+            Some(Payload::I2sFormat(f)) => self.device.on_i2s_format(&f, msg.sim_time_ns),
+            Some(Payload::I2sOut(o)) => self.device.on_i2s_out(&o.pcm, msg.sim_time_ns),
+            Some(Payload::DvpFormat(f)) => self.device.on_dvp_format(&f, msg.sim_time_ns),
+            Some(Payload::CsiFormat(f)) => self.device.on_csi_format(&f, msg.sim_time_ns),
             _ => {}
         }
     }
@@ -355,7 +1029,7 @@ impl<D: Device, const N: usize> Part<D, N> {
 
     /// `part_on_input`: the first `len` bytes are the interaction's name.
     pub fn on_input(&mut self, len: i32) {
-        if let Ok(name) = std::str::from_utf8(Self::frame(&self.buffer, len)) {
+        if let Ok(name) = std::str::from_utf8(Self::frame(&self.buffer[..], len)) {
             self.device.on_input(name);
         }
     }
@@ -366,6 +1040,53 @@ impl<D: Device, const N: usize> Part<D, N> {
             Some(State(state)) => self.write(&state),
             None => 0,
         }
+    }
+
+    /// `part_video_format`.
+    pub fn video_format(&mut self) -> i32 {
+        match self.device.video_format() {
+            Some(f) => self.write(&f),
+            None => 0,
+        }
+    }
+
+    /// `part_video_in`: the first `len` bytes are the picture. `0` when the
+    /// device kept it, else the length of why not, written over it.
+    pub fn video_in(&mut self, len: i32) -> i32 {
+        let Self { buffer, device } = self;
+        let Err(why) = device.video_in(Self::frame(&buffer[..], len)) else { return 0 };
+        let why = &why.as_bytes()[..why.len().min(N)];
+        buffer[..why.len()].copy_from_slice(why);
+        why.len() as i32
+    }
+
+    /// `part_render`: the device's bytes, as they are. A picture that does
+    /// not fit is the device's bug, and a trap names the part, as for a
+    /// message.
+    pub fn render(&mut self) -> i32 {
+        let Some(picture) = self.device.render() else { return 0 };
+        let len = picture.len();
+        assert!(len <= N, "{}: a {len}-byte picture does not fit its {N}-byte buffer", D::NAME);
+        self.buffer[..len].copy_from_slice(picture);
+        len as i32
+    }
+
+    /// `part_audio_out`: the device writes straight into the buffer, so it
+    /// cannot overrun it; an odd count is cut to whole samples.
+    pub fn audio_out(&mut self) -> i32 {
+        let whole = N & !1;
+        let len = self.device.audio_out(&mut self.buffer[..whole]).min(whole);
+        (len & !1) as i32
+    }
+
+    /// `part_audio_in`: the first `len` bytes of the buffer are samples.
+    pub fn audio_in(&mut self, len: i32) {
+        self.device.audio_in(Self::frame(&self.buffer[..], len));
+    }
+
+    /// `part_audio_rate`: anything but 0 asks the rate the device hears at.
+    pub fn audio_rate(&self, receive: i32) -> i32 {
+        self.device.audio_rate(receive != 0) as i32
     }
 }
 
@@ -400,20 +1121,68 @@ impl<D: Device, const N: usize> Slot<D, N> {
 /// ```
 ///
 /// The buffer holds every message either side passes: a bus request with a
-/// long write needs more than a button's drives, and a serial device takes
-/// what the chip transmits 128 bytes at a time. A host hands over nothing
-/// that does not fit, and a `BusRequest` or a message that does not fit
-/// fails the part.
+/// long write needs more than a button's drives, a serial device takes what
+/// the chip transmits 128 bytes at a time, and an audio device that listens
+/// 4096 (a message of up to 4114 bytes). A host hands over nothing that does
+/// not fit, and a `BusRequest` or a message that does not fit fails the
+/// part.
+///
+/// A part that makes a sound or hears one says so after the buffer, with
+/// `sounds`, `hears` or both, which exports `part_audio_out`,
+/// `part_audio_in` and `part_audio_rate` ([`Device::audio_out`]): a host
+/// reads those exports as what the part does with sound, so a part without
+/// a marker has none of them.
+///
+/// ```ignore
+/// esp_part::export_part!(Max98357a, buffer = 8192, sounds);
+/// esp_part::export_part!(Es8311, buffer = 16384, hears, sounds);
+/// ```
+///
+/// `export_part!(Camera, buffer = 1048576, sees)` also exports
+/// `part_video_format` and `part_video_in`, for a device that is shown
+/// pictures ([`Device::video_format`]); it asks for none larger than its
+/// buffer.
 #[macro_export]
 macro_rules! export_part {
     ($device:ty) => {
         $crate::export_part!($device, buffer = 512);
     };
+    // Each marker spelled out, so a marker another arm takes falls through.
+    ($device:ty, buffer = $n:expr, sounds) => {
+        $crate::export_part!($device, buffer = $n);
+        $crate::__export_part_sound!(sounds);
+    };
+    ($device:ty, buffer = $n:expr, hears) => {
+        $crate::export_part!($device, buffer = $n);
+        $crate::__export_part_sound!(hears);
+    };
+    ($device:ty, buffer = $n:expr, hears, sounds) => {
+        $crate::export_part!($device, buffer = $n);
+        $crate::__export_part_sound!(hears, sounds);
+    };
+    ($device:ty, sounds) => {
+        $crate::export_part!($device, buffer = 512, sounds);
+    };
+    ($device:ty, hears) => {
+        $crate::export_part!($device, buffer = 512, hears);
+    };
+    ($device:ty, hears, sounds) => {
+        $crate::export_part!($device, buffer = 512, hears, sounds);
+    };
     ($device:ty, buffer = $n:expr) => {
         static __ESP_PART: $crate::Slot<$device, $n> = $crate::Slot::new();
 
+        /// The part's buffer, in bytes: what `part_buffer_len` answers, for
+        /// a device to size what it writes (`esp_part::camera::piece_for`).
+        #[allow(dead_code)]
+        pub const PART_BUFFER: usize = $n;
+
         #[no_mangle]
         pub extern "C" fn part_abi_version() -> i32 {
+            // Make the part, and its buffer, now: the first call a host
+            // makes. Made later, inside `part_buffer`, it could grow memory
+            // under a view the host had already taken.
+            __ESP_PART.with(|_| ());
             $crate::proto::PartAbiVersion::Current as i32
         }
         #[no_mangle]
@@ -422,6 +1191,7 @@ macro_rules! export_part {
         }
         #[no_mangle]
         pub extern "C" fn part_buffer_len() -> i32 {
+            __ESP_PART.with(|_| ());
             $n
         }
         #[no_mangle]
@@ -455,6 +1225,60 @@ macro_rules! export_part {
         #[no_mangle]
         pub extern "C" fn part_state() -> i32 {
             __ESP_PART.with(|p| p.state())
+        }
+        #[no_mangle]
+        pub extern "C" fn part_render() -> i32 {
+            __ESP_PART.with(|p| p.render())
+        }
+    };
+    ($device:ty, buffer = $n:expr, sees) => {
+        $crate::export_part!($device, buffer = $n);
+        #[no_mangle]
+        pub extern "C" fn part_video_format() -> i32 {
+            __ESP_PART.with(|p| p.video_format())
+        }
+        #[no_mangle]
+        pub extern "C" fn part_video_in(len: i32) -> i32 {
+            __ESP_PART.with(|p| p.video_in(len))
+        }
+    };
+}
+
+/// The sound exports for [`export_part!`]'s markers: `sounds` adds
+/// `part_audio_out`, `hears` adds `part_audio_in`, and either adds
+/// `part_audio_rate`, once.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __export_part_sound {
+    (sounds) => {
+        $crate::__export_part_sound!(@out);
+        $crate::__export_part_sound!(@rate);
+    };
+    (hears) => {
+        $crate::__export_part_sound!(@in);
+        $crate::__export_part_sound!(@rate);
+    };
+    (hears, sounds) => {
+        $crate::__export_part_sound!(@in);
+        $crate::__export_part_sound!(@out);
+        $crate::__export_part_sound!(@rate);
+    };
+    (@out) => {
+        #[no_mangle]
+        pub extern "C" fn part_audio_out() -> i32 {
+            __ESP_PART.with(|p| p.audio_out())
+        }
+    };
+    (@in) => {
+        #[no_mangle]
+        pub extern "C" fn part_audio_in(len: i32) {
+            __ESP_PART.with(|p| p.audio_in(len))
+        }
+    };
+    (@rate) => {
+        #[no_mangle]
+        pub extern "C" fn part_audio_rate(receive: i32) -> i32 {
+            __ESP_PART.with(|p| p.audio_rate(receive))
         }
     };
 }
@@ -523,6 +1347,14 @@ mod tests {
     }
 
     #[test]
+    fn a_waveform_is_one_message_with_every_width() {
+        let m = play(4, false, &[80_000, 80_000, 50_000], 7_000);
+        assert_eq!(m.sim_time_ns, 7_000);
+        let Some(Payload::PulseDrive(w)) = m.payload else { panic!("a PulseDrive") };
+        assert_eq!((w.pin, w.first_level, w.widths_ns), (4, false, vec![80_000, 80_000, 50_000]));
+    }
+
+    #[test]
     fn the_state_is_what_the_device_shows_and_zero_for_a_device_showing_nothing() {
         let mut part = part();
         let n = part.state() as usize;
@@ -540,6 +1372,122 @@ mod tests {
         }
         assert_eq!(Part::<Mute, 64>::default().state(), 0);
         assert_eq!(Part::<Mute, 64>::default().on_bus(0), 0, "a device without a bus answers nothing");
+        assert_eq!(Part::<Mute, 64>::default().render(), 0, "a device that draws nothing");
+    }
+
+    /// A lamp: draws its brightness, one byte, when it changes.
+    #[derive(Default)]
+    struct Lamp {
+        level: [u8; 1],
+        drawn: bool,
+    }
+
+    impl Device for Lamp {
+        const NAME: &'static str = "lamp";
+        fn configure(&mut self, _: &PartConfig) {}
+        fn claims(&self) -> Vec<Claim> {
+            Vec::new()
+        }
+        fn on_input(&mut self, name: &str) {
+            self.level[0] = if name == "on" { 0xff } else { 0 };
+            self.drawn = false;
+        }
+        fn render(&mut self) -> Option<&[u8]> {
+            if std::mem::replace(&mut self.drawn, true) {
+                return None;
+            }
+            Some(&self.level[..])
+        }
+    }
+
+    #[test]
+    fn a_picture_is_written_as_it_is_and_zero_when_nothing_is_new() {
+        let mut part = Part::<Lamp, 8>::default();
+        assert_eq!(part.render(), 1);
+        assert_eq!(part.buffer[0], 0);
+        assert_eq!(part.render(), 0, "nothing new");
+        part.device.on_input("on");
+        assert_eq!(part.render(), 1);
+        assert_eq!(part.buffer[0], 0xff);
+    }
+
+    /// A codec: hears what it is fed and makes it back as its sound, at 8 kHz.
+    #[derive(Default)]
+    struct Loop {
+        held: Vec<u8>,
+    }
+
+    impl Device for Loop {
+        const NAME: &'static str = "loop";
+        fn configure(&mut self, _: &PartConfig) {}
+        fn claims(&self) -> Vec<Claim> {
+            Vec::new()
+        }
+        fn audio_out(&mut self, out: &mut [u8]) -> usize {
+            // Honest about whole samples, and about the room it was given.
+            let n = self.held.len().min(out.len()) & !1;
+            out[..n].copy_from_slice(&self.held[..n]);
+            self.held.drain(..n);
+            n
+        }
+        fn audio_in(&mut self, pcm: &[u8]) {
+            self.held.extend_from_slice(pcm);
+        }
+        fn audio_rate(&self, receive: bool) -> u32 {
+            if receive { 8_000 } else { 16_000 }
+        }
+    }
+
+    #[test]
+    fn a_sound_is_handed_over_a_buffer_at_a_time_and_the_rest_kept() {
+        let mut part = Part::<Loop, 7>::default();
+        part.buffer[..5].copy_from_slice(&[1, 2, 3, 4, 5]);
+        part.audio_in(5);
+        part.device.audio_in(&[6, 7, 8, 9, 10, 11]);
+        // Seven bytes of buffer hold three samples.
+        assert_eq!(part.audio_out(), 6);
+        assert_eq!(part.buffer[..6], [1, 2, 3, 4, 5, 6]);
+        assert_eq!(part.audio_out(), 4);
+        assert_eq!(part.buffer[..4], [7, 8, 9, 10]);
+        assert_eq!(part.audio_out(), 0, "one odd byte left is not a sample");
+        assert_eq!((part.audio_rate(0), part.audio_rate(1)), (16_000, 8_000));
+        assert_eq!(Part::<Button, 64>::default().audio_out(), 0, "a device that makes no sound");
+        assert_eq!(Part::<Button, 64>::default().audio_rate(1), 0);
+    }
+
+    /// A device that claims to have written more than it was given, and an
+    /// odd count: neither reaches the host.
+    #[test]
+    fn an_answer_past_the_buffer_or_of_an_odd_count_is_cut() {
+        #[derive(Default)]
+        struct Liar;
+        impl Device for Liar {
+            const NAME: &'static str = "liar";
+            fn configure(&mut self, _: &PartConfig) {}
+            fn claims(&self) -> Vec<Claim> {
+                Vec::new()
+            }
+            fn audio_out(&mut self, out: &mut [u8]) -> usize {
+                out.len() + 9
+            }
+        }
+        assert_eq!(Part::<Liar, 9>::default().audio_out(), 8);
+    }
+
+    /// The markers export what they say, wired to the device.
+    mod markers {
+        use super::Loop;
+        use crate::Device;
+        crate::export_part!(Loop, buffer = 64, hears, sounds);
+
+        #[test]
+        fn hears_and_sounds_export_the_three_calls() {
+            assert_eq!((part_audio_rate(0), part_audio_rate(1)), (16_000, 8_000));
+            __ESP_PART.with(|p| p.buffer[..2].copy_from_slice(&[0x34, 0x12]));
+            part_audio_in(2);
+            assert_eq!(part_audio_out(), 2);
+            assert_eq!(__ESP_PART.with(|p| p.buffer[..2].to_vec()), [0x34, 0x12]);
+        }
     }
 
     #[test]
@@ -655,7 +1603,7 @@ mod tests {
         let reg = Register::decode(&part.buffer[..n]).unwrap();
         assert_eq!(
             reg.claims,
-            [Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: 0, watch_pins: 0, pwm_pins: 1 << 4 })) }]
+            [Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: 0, watch_pins: 0, pwm_pins: 1 << 4, edge_pins: 0 })) }]
         );
         let w = EmulatorMessage {
             sim_time_ns: 7,
@@ -671,6 +1619,37 @@ mod tests {
         part.buffer[..w.len()].copy_from_slice(&w);
         part.on_message(w.len() as i32);
         assert_eq!(part.poll(8), 0);
+    }
+
+    #[test]
+    fn a_part_reading_edges_claims_them_and_is_handed_each_run() {
+        #[derive(Default)]
+        struct Strip {
+            told: Option<(u32, bool, Vec<u32>, u64)>,
+        }
+        impl Device for Strip {
+            const NAME: &'static str = "strip";
+            const ON_MESSAGE: bool = true;
+            fn configure(&mut self, _: &PartConfig) {}
+            fn claims(&self) -> Vec<Claim> {
+                vec![reads_edges(1 << 8)]
+            }
+            fn on_edges(&mut self, pin: u32, first_level: bool, widths_ns: &[u32], at_ns: u64) {
+                self.told = Some((pin, first_level, widths_ns.to_vec(), at_ns));
+            }
+        }
+        let mut part = Part::<Strip, 64>::default();
+        let n = part.register() as usize;
+        let reg = Register::decode(&part.buffer[..n]).unwrap();
+        assert_eq!(
+            reg.claims,
+            [Claim { what: Some(claim::What::Gpio(GpioClaim { drive_pins: 0, watch_pins: 0, pwm_pins: 0, edge_pins: 1 << 8 })) }]
+        );
+        let run = GpioEdges { pin: 8, first_level: true, widths_ns: vec![400, 850, 800] };
+        let w = EmulatorMessage { sim_time_ns: 9, payload: Some(Payload::GpioEdges(run)) }.encode_to_vec();
+        part.buffer[..w.len()].copy_from_slice(&w);
+        part.on_message(w.len() as i32);
+        assert_eq!(part.device.told, Some((8, true, vec![400, 850, 800], 9)));
     }
 
     #[test]
@@ -713,6 +1692,298 @@ mod tests {
         part.buffer[..told.len()].copy_from_slice(&told);
         part.on_message(told.len() as i32);
         assert_eq!(part.device.seen, [(false, 9)]);
+    }
+
+    #[test]
+    fn an_audio_device_is_told_the_format_and_hears_what_the_chip_sent() {
+        #[derive(Default)]
+        struct Codec {
+            format: Option<(I2sFormat, u64)>,
+            heard: Vec<(Vec<u8>, u64)>,
+        }
+        impl Device for Codec {
+            const NAME: &'static str = "codec";
+            const ON_MESSAGE: bool = true;
+            fn configure(&mut self, _: &PartConfig) {}
+            fn claims(&self) -> Vec<Claim> {
+                // The device's DIN on pad 6 is the chip's data out, its DOUT
+                // on pad 7 the chip's data in.
+                vec![i2s(Some(6), Some(7))]
+            }
+            fn on_i2s_format(&mut self, format: &I2sFormat, at_ns: u64) {
+                self.format = Some((*format, at_ns));
+            }
+            fn on_i2s_out(&mut self, pcm: &[u8], at_ns: u64) {
+                self.heard.push((pcm.to_vec(), at_ns));
+            }
+            fn poll(&mut self, now_ns: u64) -> Option<EmulatorMessage> {
+                self.heard.pop().map(|(pcm, _)| samples(&pcm, now_ns))
+            }
+        }
+        let mut part = Part::<Codec, 256>::default();
+        let n = part.register() as usize;
+        let reg = Register::decode(&part.buffer[..n]).unwrap();
+        let want = I2sClaim { dout_pin: Some(6), din_pin: Some(7), ..Default::default() };
+        assert_eq!(reg.claims, [Claim { what: Some(claim::What::I2s(want)) }]);
+
+        let tell = |part: &mut Part<Codec, 256>, msg: EmulatorMessage| {
+            let bytes = msg.encode_to_vec();
+            part.buffer[..bytes.len()].copy_from_slice(&bytes);
+            part.on_message(bytes.len() as i32);
+        };
+        let format = I2sFormat { receive: true, sample_rate_hz: 16_000, channels: 2, bits: 32 };
+        tell(&mut part, EmulatorMessage { sim_time_ns: 3, payload: Some(Payload::I2sFormat(format)) });
+        assert_eq!(part.device.format, Some((format, 3)));
+        let out = I2sOut { pcm: vec![1, 2, 3, 4] };
+        tell(&mut part, EmulatorMessage { sim_time_ns: 5, payload: Some(Payload::I2sOut(out)) });
+        assert_eq!(part.device.heard, [(vec![1, 2, 3, 4], 5)]);
+        let n = part.poll(9) as usize;
+        assert_eq!(EmulatorMessage::decode(&part.buffer[..n]).unwrap(), samples(&[1, 2, 3, 4], 9));
+
+        // What a serial line carries goes to on_uart, which an audio device
+        // leaves alone; and a device that leaves ON_MESSAGE false is not told.
+        let tx = UartTx { port: 1, data: b"AT".to_vec() };
+        tell(&mut part, EmulatorMessage { sim_time_ns: 6, payload: Some(Payload::UartTx(tx)) });
+        assert!(part.device.heard.is_empty());
+        let mut part = Part::<Button, 64>::default();
+        let bytes =
+            EmulatorMessage { sim_time_ns: 3, payload: Some(Payload::I2sFormat(format)) }.encode_to_vec();
+        part.buffer[..bytes.len()].copy_from_slice(&bytes);
+        part.on_message(bytes.len() as i32);
+        assert_eq!(part.poll(9), 0);
+    }
+
+    #[test]
+    fn a_camera_is_told_its_receivers_formats() {
+        #[derive(Default)]
+        struct Cam {
+            dvp: Option<(bool, u32, u64)>,
+            csi: Option<(bool, u32, u64)>,
+        }
+        impl Device for Cam {
+            const NAME: &'static str = "cam";
+            const ON_MESSAGE: bool = true;
+            fn configure(&mut self, _: &PartConfig) {}
+            // A part is one sensor or the other; which format it hears is the
+            // host's to pick, and the device only takes it.
+            fn claims(&self) -> Vec<Claim> {
+                Vec::new()
+            }
+            fn on_dvp_format(&mut self, f: &DvpFormat, at_ns: u64) {
+                self.dvp = Some((f.capturing, f.session, at_ns));
+            }
+            fn on_csi_format(&mut self, f: &CsiFormat, at_ns: u64) {
+                self.csi = Some((f.capturing, f.lanes, at_ns));
+            }
+        }
+        let mut part = Part::<Cam, 64>::default();
+        for (t, payload) in [
+            (5, Payload::DvpFormat(DvpFormat { capturing: true, session: 2, ..Default::default() })),
+            (6, Payload::CsiFormat(CsiFormat { capturing: true, lanes: 2, session: 1 })),
+        ] {
+            let n = part.write(&EmulatorMessage { sim_time_ns: t, payload: Some(payload) });
+            part.on_message(n);
+        }
+        assert_eq!(part.device.dvp, Some((true, 2, 5)));
+        assert_eq!(part.device.csi, Some((true, 2, 6)));
+    }
+
+    #[test]
+    fn a_device_that_sees_says_what_to_show_it_and_takes_the_picture() {
+        #[derive(Default)]
+        struct Eye {
+            seen: Vec<u8>,
+        }
+        impl Device for Eye {
+            const NAME: &'static str = "eye";
+            fn configure(&mut self, _: &PartConfig) {}
+            fn claims(&self) -> Vec<Claim> {
+                Vec::new()
+            }
+            fn video_format(&mut self) -> Option<VideoFormat> {
+                Some(VideoFormat { width: 2, height: 1, fourcc: camera::fourcc(b"GREY"), fps: 5 })
+            }
+            fn video_in(&mut self, picture: &[u8]) -> Result<(), String> {
+                if picture.len() != 2 {
+                    return Err("not two pixels".to_string());
+                }
+                self.seen = picture.to_vec();
+                Ok(())
+            }
+        }
+        let mut part = Part::<Eye, 16>::default();
+        let n = part.video_format() as usize;
+        assert_eq!(VideoFormat::decode(&part.buffer[..n]).unwrap().width, 2);
+        part.buffer[..2].copy_from_slice(&[7, 9]);
+        assert_eq!(part.video_in(2), 0, "kept");
+        assert_eq!(part.device.seen, [7, 9]);
+        let n = part.video_in(3) as usize;
+        assert_eq!(&part.buffer[..n], b"not two pixels", "why not, over the picture");
+        assert_eq!(Part::<Lamp, 8>::default().video_format(), 0, "a device that sees nothing");
+    }
+
+    #[test]
+    fn colour_bars_take_each_layout() {
+        use camera::{bars, fourcc, Mode};
+        let mode = |name: &[u8; 4]| Mode { width: 16, height: 2, fourcc: fourcc(name) };
+        // White, then yellow two pixels on, high byte first and low byte first.
+        let be = bars(&mode(b"RGBP")).unwrap();
+        assert_eq!((be.len(), &be[..2], &be[4..6]), (64, &[0xFF, 0xFF][..], &[0xFF, 0xE0][..]));
+        assert_eq!(&bars(&mode(b"RGBR")).unwrap()[4..6], &[0xE0, 0xFF]);
+        // White in YUYV: luma 235, chroma 128.
+        assert_eq!(&bars(&mode(b"YUYV")).unwrap()[..4], &[235, 128, 235, 128]);
+        // Yellow (bar 1) in a BGGR mosaic: blue 0, green 255; red 255 on row 1.
+        let m = bars(&mode(b"BA81")).unwrap();
+        assert_eq!((&m[2..4], m[16 + 3]), (&[0, 255][..], 255));
+        let ten = bars(&mode(b"BG10")).unwrap();
+        assert_eq!((ten.len(), &ten[..2]), (64, &[0xFF, 0x03][..]), "255 widened to 1023");
+        assert_eq!(bars(&mode(b"JPEG")), None);
+    }
+
+    #[test]
+    fn a_stream_paces_its_frames_by_their_starts_and_cuts_them_to_the_buffer() {
+        use camera::{fourcc, Mode, Stream};
+        let mode = Mode { width: 5, height: 2, fourcc: fourcc(b"GREY") };
+        let frame = || Some((std::sync::Arc::from(vec![7u8; 10]), mode));
+        let piece = |m: Option<EmulatorMessage>| match m {
+            Some(EmulatorMessage { sim_time_ns, payload: Some(Payload::CamFrame(f)) }) => {
+                (sim_time_ns, f.data.len(), f.end_of_frame, f.session)
+            }
+            other => panic!("{other:?}"),
+        };
+        let mut s = Stream::default();
+        assert!(s.poll(0, 100, 4, frame).is_none(), "nothing before a capturing format");
+        s.format(true, 1, 0, 100);
+        // The first frame starts a period after the format, sent a period ahead.
+        assert_eq!(piece(s.poll(0, 100, 4, frame)), (0, 4, false, 0));
+        assert_eq!(piece(s.poll(0, 100, 4, frame)), (0, 4, false, 0));
+        assert_eq!(piece(s.poll(0, 100, 4, frame)), (100, 2, true, 1));
+        assert!(s.poll(50, 100, 4, frame).is_none(), "the next is more than a period off");
+        assert_eq!(piece(s.poll(100, 100, 10, frame)), (200, 10, true, 1));
+        // Emulated time leapt: start again from now, no backlog.
+        assert_eq!(piece(s.poll(1_000, 100, 10, frame)), (1_100, 10, true, 1));
+        // A new session counts from its format and drops what is not sent.
+        s.poll(1_100, 100, 4, frame);
+        s.format(true, 2, 1_150, 100);
+        assert_eq!(piece(s.poll(1_150, 100, 10, frame)), (1_250, 10, true, 2));
+        // A stop sends nothing; nor does a reset, until the next format.
+        s.format(false, 2, 1_200, 100);
+        assert!(s.poll(1_300, 100, 10, frame).is_none());
+        s.format(true, 3, 1_300, 100);
+        assert!(s.poll(5, 100, 10, frame).is_none(), "the clock went back: the chip reset");
+        s.format(true, 4, 10, 100);
+        assert_eq!(piece(s.poll(10, 100, 10, frame)), (110, 10, true, 4));
+        assert_eq!(s.sent(), 5);
+    }
+
+    #[test]
+    fn a_piece_is_never_less_than_nothing() {
+        assert_eq!(camera::piece_for(65536), 65472);
+        assert_eq!(camera::piece_for(10), 0, "a buffer under the envelope carries no pixels, and does not wrap");
+    }
+
+    #[test]
+    fn a_sensor_sends_its_bars_at_its_rate() {
+        use camera::{fourcc, Mode, Sensor};
+        let grey = Mode { width: 8, height: 2, fourcc: fourcc(b"GREY") };
+        let mut s = Sensor::default();
+        assert!(s.poll(0, 10.0, 128, Some(grey)).is_none(), "nothing before a capturing format");
+        s.format(true, 1, 0, 10.0);
+        let frame = |m: Option<EmulatorMessage>| match m {
+            Some(EmulatorMessage { sim_time_ns, payload: Some(Payload::CamFrame(f)) }) => (sim_time_ns, f.data),
+            other => panic!("{other:?}"),
+        };
+        let (t, first) = frame(s.poll(0, 10.0, 128, Some(grey)));
+        assert_eq!((t, first.len()), (100_000_000, 16), "a period at 10 fps, the whole frame in one piece");
+        // `set:fps=` overrides the rate the registers give.
+        assert!(s.on_input("set:fps=20"));
+        assert!(!s.on_input("press"));
+        let (t, again) = frame(s.poll(150_000_000, 10.0, 128, Some(grey)));
+        assert_eq!((t, &again), (200_000_000, &first), "the frame already due keeps its start, the same bars");
+        let (t, _) = frame(s.poll(200_000_000, 10.0, 128, Some(grey)));
+        assert_eq!(t, 250_000_000, "then a 20 fps period");
+        let state = s.state(Some(grey), 10.0);
+        assert_eq!((state.get("format"), state.get("fps"), state.get("frames")), (Some("GREY"), Some("20"), Some("3")));
+        assert_eq!(s.state(None, 10.0).get("format"), Some("none"));
+    }
+
+    #[test]
+    fn rgb_is_made_into_each_sensor_layout() {
+        use camera::{convert, fourcc, Mode};
+        // Two pixels: white, then pure blue.
+        let rgb = [255, 255, 255, 0, 0, 255];
+        let mode = |name: &[u8; 4]| Mode { width: 2, height: 1, fourcc: fourcc(name) };
+        assert_eq!(convert(&rgb, &mode(b"RGBP")).unwrap(), [0xFF, 0xFF, 0x00, 0x1F]);
+        assert_eq!(convert(&rgb, &mode(b"RGBR")).unwrap(), [0xFF, 0xFF, 0x1F, 0x00]);
+        // Full-range luma: white 255, blue 29.
+        assert_eq!(convert(&rgb, &mode(b"GREY")).unwrap(), [255, 29]);
+        // One chroma pair for the two pixels, averaged: Cb (128 + 255) / 2,
+        // Cr (128 + 107) / 2.
+        assert_eq!(convert(&rgb, &mode(b"YUYV")).unwrap(), [255, 191, 29, 117]);
+        assert_eq!(convert(&rgb, &mode(b"UYVY")).unwrap(), [191, 255, 117, 29]);
+        // A 2x2 mosaic: each cell keeps its own channel.
+        let square = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
+        let m = |name: &[u8; 4]| Mode { width: 2, height: 2, fourcc: fourcc(name) };
+        assert_eq!(convert(&square, &m(b"GBRG")).unwrap(), [20, 60, 70, 110]);
+        assert_eq!(convert(&square, &m(b"BA81")).unwrap(), [30, 50, 80, 100]);
+        assert_eq!(convert(&[200; 12], &m(b"GB10")).unwrap()[..2], (200u16 << 2 | 200 >> 6).to_le_bytes());
+        assert!(convert(&rgb[..3], &mode(b"GREY")).is_none(), "not the mode's size");
+        assert!(convert(&rgb, &mode(b"JPEG")).is_none(), "a JPEG is not made from pixels");
+    }
+
+    #[test]
+    fn a_sensor_is_shown_pictures_it_can_take_and_says_why_not() {
+        use camera::{fourcc, Mode, Sensor};
+        let grey = Mode { width: 4, height: 2, fourcc: fourcc(b"GREY") };
+        let jpeg = Mode { width: 4, height: 2, fourcc: fourcc(b"JPEG") };
+        let mut s = Sensor::default();
+        assert!(s.video_format(Some(grey), 15.0, 16).is_none(), "4x2 RGB888 is 24 bytes: more than a 16-byte buffer");
+        let f = s.video_format(Some(grey), 7.5, 64).unwrap();
+        assert_eq!((f.width, f.height, f.fps), (4, 2, 8), "the rate rounded, not cut");
+        // RGB888 of its size is made into the mode's layout and kept.
+        assert_eq!(s.video_in(Some(grey), &[255; 24]), Ok(()));
+        assert_eq!(s.state(Some(grey), 15.0).get("shown"), Some("8"));
+        // The mode's own layout is taken as it is; anything else is refused.
+        assert_eq!(s.video_in(Some(grey), &[7; 8]), Ok(()));
+        assert!(s.video_in(Some(grey), &[7; 10]).unwrap_err().contains("not 4x2 RGB888"));
+        // The firmware moved to JPEG since the feeder asked: its picture,
+        // made for the old mode, is not kept.
+        assert!(s.video_in(Some(jpeg), &[255; 24]).unwrap_err().contains("changed the mode"));
+        s.video_format(Some(jpeg), 15.0, 64);
+        assert!(s.video_in(Some(jpeg), &[255; 24]).unwrap_err().contains("not a JPEG"));
+        assert_eq!(s.video_in(Some(jpeg), &[0xFF, 0xD8, 1, 0xFF, 0xD9]), Ok(()));
+        assert!(s.video_in(None, &[0; 3]).is_err(), "nothing programmed");
+        // A capturing receiver gets the picture, not bars, in its mode.
+        s.format(true, 1, 0, 10.0);
+        match s.poll(0, 10.0, 128, Some(jpeg)) {
+            Some(EmulatorMessage { payload: Some(Payload::CamFrame(f)), .. }) => assert_eq!(f.data, [0xFF, 0xD8, 1, 0xFF, 0xD9]),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_frame_reads_and_writes_each_container_width_left_aligned() {
+        let of = |bits| audio::Frame::of(&I2sFormat { receive: false, sample_rate_hz: 16_000, channels: 2, bits });
+        for (bits, sample, bytes) in [
+            (8, 0x1200_0000, vec![0x12]),
+            (16, 0x1234_0000, vec![0x34, 0x12]),
+            (24, 0x1234_5600, vec![0x56, 0x34, 0x12]),
+            (32, -0x1234_5678, vec![0x88, 0xA9, 0xCB, 0xED]),
+        ] {
+            let f = of(bits).unwrap();
+            assert_eq!(f.bytes(), 2 * bytes.len());
+            let mut frame = vec![0; f.bytes()];
+            f.write(&mut frame, 1, sample);
+            assert_eq!(&frame[bytes.len()..], &bytes[..], "{bits}-bit slot 1");
+            assert!(frame[..bytes.len()].iter().all(|&b| b == 0), "slot 0 untouched");
+            assert_eq!(f.read(&frame, 1), sample, "{bits}-bit read back");
+        }
+        assert_eq!(of(16).unwrap().frames_in(10_000_000), 160, "10 ms at 16 kHz");
+        for bits in [0, 12, 40] {
+            assert_eq!(of(bits), None, "{bits}-bit containers");
+        }
+        let none = I2sFormat { receive: true, sample_rate_hz: 0, channels: 2, bits: 16 };
+        assert_eq!(audio::Frame::of(&none), None, "no rate yet");
     }
 
     #[test]

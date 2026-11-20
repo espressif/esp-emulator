@@ -87,7 +87,7 @@ One command a line, one answer a line:
 Put them next to the board files, the firmware as `adc_oneshot-esp32c3.bin`,
 and run as above. Built for an ESP32-C5, C6 or H2 the firmware reads GPIO 3 as
 well (ADC1 channel 2 on the C5 and H2); for an ESP32-S31 it reads GPIO 43 at
-0 dB, so a board for it wires the part's pin there. The H2's emulated eFuse
-carries no ADC calibration, so on the H2 the firmware prints raw codes only.
-The P4 and the S3 refuse an analog part: their ADC is not modelled yet. To
-write a part of your own, see [docs/guides/PARTS.md](../../../docs/guides/PARTS.md).
+0 dB, and for an ESP32-P4 GPIO 20 (ADC1 channel 4), so a board for either
+wires the part's pin there; for an ESP32-S3 it reads GPIO 3 (ADC1 channel 2).
+The H2's emulated eFuse carries no ADC calibration, so on the H2 the firmware
+prints raw codes only. To write a part of your own, see [docs/guides/PARTS.md](../../../docs/guides/PARTS.md).

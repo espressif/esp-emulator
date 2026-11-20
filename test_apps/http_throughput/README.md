@@ -72,7 +72,7 @@ idf.py -B build_esp32s31 merge-bin -o $PWD/build_esp32s31/merged.bin
 ### 3. Run in the emulator
 
 ```sh
-./../target/release/esp-emu \
+esp-emu \
   --chip esp32c3 \
   --firmware build_esp32c3/merged.bin \
   --elf build_esp32c3/http_throughput.elf \
@@ -120,7 +120,7 @@ ratio of 1.50.
 
 ## Smoke harness (opt-in)
 
-`tests/idf/http_throughput_smoke.rs` automates the whole flow — builds the firmware
+`tests/idf/http_throughput_smoke.rs`, in the emulator's source tree, automates the whole flow — builds the firmware
 per chip, serves the payload from an in-process HTTP server (no `http_server.py`
 needed; it's the Rust equivalent), boots each binary, and asserts the full
 payload was downloaded. It is **opt-in**: plain `cargo test` skips it. Run it
@@ -137,7 +137,8 @@ not gate on a throughput threshold (wall-clock would flake under host load).
 
 ## Browser comparison
 
-`browser_compare.sh` compares native `--net user` with the browser build
+`browser_compare.sh` (in the emulator's source tree, with the browser tests it
+runs) compares native `--net user` with the browser build
 through `esp-emu-relay`, on the same firmware and the same computer:
 
 ```sh
@@ -164,5 +165,4 @@ both paths, because the firmware never waits for the network.
 - `main/http_throughput_main.c` — firmware: link bring-up + HTTP download + measurement.
 - `http_server.py` — threaded host HTTP server streaming a fixed-size payload (for CLI runs).
 - `sdkconfig.defaults` — large-app partition + enlarged lwIP TCP windows.
-- `../tests/idf/http_throughput_smoke.rs` — opt-in Rust smoke harness (see above).
-- `browser_compare.sh` and `../../tests/browser/http-throughput.mjs` — native against browser comparison (see above).
+- In the emulator's source tree only: `tests/idf/http_throughput_smoke.rs`, the opt-in Rust smoke harness, and `browser_compare.sh` with `tests/browser/http-throughput.mjs`, the native against browser comparison (see above).

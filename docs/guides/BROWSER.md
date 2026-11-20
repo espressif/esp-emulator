@@ -28,6 +28,12 @@ no-cache headers, so a reload always loads what is in the folder.
 
 UART output appears in the terminal; typing in the terminal goes to the firmware's UART0. The firmware will connect to the emulated WiFi AP and get an IP address via DHCP.
 
+### SD card
+
+The **SD card** panel gives the firmware a card. Pick a raw card image (a FAT volume, with or without a partition table), or click **Blank 16 MiB card** for firmware that formats its card itself (`format_if_mount_failed`). **Options** takes the words of [`--sd`](CLI.md#sd-card) after the file name: empty puts the card in the SDMMC slot of an ESP32-P4, S3 or S31; `cs=PIN` puts it on an SPI bus of any chip, selected by that GPIO (`sdspi`); `ro`, `slot=N` and `cd=PIN` work as on the command line. The card goes in as the firmware loads, with the options as they are then, so set them first. Picking a card when a firmware is loaded loads that firmware again. A card the emulator refuses is reported in the terminal, and the firmware runs without it.
+
+**Save image** downloads the card as the firmware left it. **Reset** keeps what the firmware wrote. Loading the firmware again starts from the image as it was picked, as the flash does. The card is held in the tab's memory: the page keeps the image as picked, and the emulator keeps the card. A page of your own does the same with the [SD card API](#sd-card-api).
+
 ### The dashboard
 
 The right-hand panel shows the machine live while it runs (refreshed a few times a second) and after every **Step**:
@@ -42,11 +48,18 @@ The right-hand panel shows the machine live while it runs (refreshed a few times
 
 The browser build can add virtual components to the chip: a push button on a
 GPIO, an SHT31 sensor on I2C, a TMP123 sensor on SPI, an MH-Z19B CO₂ sensor on
-a UART, a rotary encoder counted by PCNT, an SG90 servo read as PWM and a
-potentiometer on an ADC pad. `button-demo.html`, `sensor-demo.html`,
-`co2-demo.html`, `encoder-demo.html`, `servo-demo.html` and `adc-demo.html`
-are the examples. See [PARTS.md](PARTS.md) for how to run
-them, how to write a part of your own, and how to use parts in your own page.
+a UART, a rotary encoder counted by PCNT, an SG90 servo read as PWM, a
+potentiometer on an ADC pad, a microphone and an amplifier on I2S, an IR
+receiver timed by RMT, an OLED screen on I2C that the page draws, a DHT22
+sensor whose reply on one wire the firmware times, an LED strip the chip
+drives through RMT, and camera sensors on DVP and MIPI CSI whose frames the
+firmware receives. `button-demo.html`, `sensor-demo.html`,
+`thermometer-demo.html`, `co2-demo.html`, `encoder-demo.html`,
+`servo-demo.html`, `adc-demo.html`, `audio-demo.html`, `ir-demo.html`,
+`oled-demo.html`, `dht-demo.html`, `ws2812-demo.html` and `camera-demo.html`
+are the examples. See
+[PARTS.md](PARTS.md) for how to run them, how to write a part of your own, and
+how to use parts in your own page.
 
 ## Browser Networking
 
@@ -301,6 +314,43 @@ After `run_until(n)`, `cycles()` has advanced by `n`, or by less when the run st
 
 `cycles()` counts CPU-clock cycles at whatever clock the firmware runs, so convert a difference of two readings with the `cycles_per_us()` of that interval; dividing the total is only right while the firmware keeps one CPU frequency. It starts again from zero at a chip reset.
 
+## Camera frames
+
+On ESP32-S3, P4 and S31 the page can be the sensor on the DVP camera receiver, and see the frames the firmware received.
+
+| Method | What it does |
+|---|---|
+| `camera_attach_host_source(on)` | Put the page's sensor on the receiver's bus, or take it off. Throws on a chip with no receiver, and while a co-simulated camera sensor is on the receiver's bus |
+| `camera_push_frame(jpeg)` | Queue a whole JPEG frame. A frame sent while `camera_capturing()` is false is lost, as on the wire |
+| `camera_push_frame_fmt(data, fourcc, width, height)` | Queue a frame in a declared format: `fourcc` is four ASCII characters, little-endian (`RGBP` RGB565 high byte first, `RGBR` low byte first, `UYVY`, `YUYV`, `YVYU`, `VYUY`, `GREY`, `JPEG`). Throws when a raw frame's length is not its geometry's |
+| `camera_capturing()` | Whether the receiver is started, clocked and has the page's sensor |
+| `camera_host_queue_len()` | Frames queued and not yet started. Keep one or two ahead |
+| `camera_set_fps(fps)` | The rate frames are paced at, in emulated time. It holds across `restart()` |
+| `camera_attach_host_sink(on)` | Start or stop keeping the frames the firmware receives. Sixteen wait; past that the oldest is dropped |
+| `camera_sink_len()` | Frames kept and not yet drained |
+| `camera_frame_drain()` | The oldest kept frame as the firmware received it, cut short where its descriptor chain was, or `undefined` |
+| `camera_frame_format()` | The last drained frame's `(width << 20) \| (height << 8) \| fps`, 0 before the first. A JPEG frame's width and height are 0 |
+| `camera_frame_fourcc()` | The last drained frame's fourcc, 0 before the first |
+
+## SD card API
+
+On ESP32-P4 the MIPI CSI path has two calls, the command line's `--csi-sensor`
+and `--csi-fps`.
+
+| Method | What it does |
+|---|---|
+| `set_csi_sensor(spec)` | Answer a camera sensor's SCCB probe: `NAME` or `NAME@ADDR`, one of `sc2336`, `ov2710`, `ov5647`, `sc202cs`. Throws on a name it does not know |
+| `set_csi_fps(fps)` | Frame rate of the CSI test pattern, 1 to 240 |
+
+A page gives the firmware an SD card, and saves it back, with two calls.
+
+| Method | What it does |
+|---|---|
+| `sd_attach(image, options)` | Put in an SD card holding `image`, a `Uint8Array` of whole 512-byte blocks. `options` are the words of `--sd` after the file name: `""` for the SDMMC slot (ESP32-P4, S3, S31), `"cs=3"` for an SPI bus of any chip, and `ro`, `slot=N`, `cd=PIN`. Call it before `load_firmware`. Throws for an image under 512 KiB, on a chip with no SDMMC host when there is no `cs=`, and when a card is already in |
+| `sd_image()` | The card's image as the firmware left it, a `Uint8Array`, or `undefined` with no card |
+
+The card stays in through `restart()`. The firmware sees a card of the image's last whole 512 KiB, as with `--sd`.
+
 ## Faults and firmware panics
 
 A CPU fault stops the machine. So does a firmware panic once `load_app_elf` has loaded the app ELF: the emulator intercepts `esp_panic_handler`, `abort` and `esp_system_abort` and stops there, as the native CLI does with `--elf`.
@@ -353,10 +403,17 @@ www/
 ├── worker.js           # Web Worker: WASM emulation loop, relay URL
 ├── button-demo.html    # Virtual parts demo: C3 firmware + a push button (PARTS.md)
 ├── sensor-demo.html    # Virtual parts demo: C3 firmware + an I2C sensor (PARTS.md)
+├── thermometer-demo.html # Virtual parts demo: C3 firmware + an SPI thermometer (PARTS.md)
 ├── co2-demo.html       # Virtual parts demo: C3 firmware + a serial CO2 sensor (PARTS.md)
 ├── encoder-demo.html   # Virtual parts demo: C6 firmware + a rotary encoder on PCNT (PARTS.md)
 ├── servo-demo.html     # Virtual parts demo: C3 firmware + a servo read as PWM (PARTS.md)
 ├── adc-demo.html       # Virtual parts demo: C3 firmware + a potentiometer on an ADC pad (PARTS.md)
+├── audio-demo.html     # Virtual parts demo: C3 firmware + a microphone and an amplifier on I2S, heard and spoken into (PARTS.md)
+├── ir-demo.html        # Virtual parts demo: C3 firmware + an IR remote timed by RMT (PARTS.md)
+├── dht-demo.html       # Virtual parts demo: C3 firmware + a DHT22 timed on one wire (PARTS.md)
+├── ws2812-demo.html    # Virtual parts demo: C3 firmware + a WS2812 strip driven by RMT (PARTS.md)
+├── oled-demo.html      # Virtual parts demo: C3 firmware + an OLED screen the page draws (PARTS.md)
+├── camera-demo.html    # Virtual parts demo: S3 or P4 firmware + camera sensors on DVP and CSI (PARTS.md)
 ├── cosim.js            # CosimPump: connects the emulator to each part's worker
 ├── part-worker.js      # Web Worker: runs one part, a WebAssembly module
 ├── vendor/
@@ -365,8 +422,9 @@ www/
     ├── esp_emu.js      # JS bindings
     └── esp_emu_bg.wasm # WASM binary
 
+esp-emu-relay/          # esp-emu-relay: WebSocket relay for TCP and UDP, its own Cargo workspace
+
 tools/
-├── relay/              # esp-emu-relay: WebSocket relay for TCP and UDP, its own Cargo workspace
 ├── setup-tap.sh        # Create/teardown TAP interface with NAT
 └── ws-net-proxy.rs     # WebSocket-to-TAP proxy for custom pages (--features ws-proxy --bin ws-net-proxy)
 ```

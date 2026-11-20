@@ -147,6 +147,9 @@ void app_main(void)
 #endif
 #if SOC_WIFI_SUPPORTED
     RUN_TEST("wifi",                   test_wifi);
+#if !CONFIG_IDF_TARGET_ESP32S31 /* the emulator has no CSI on ESP32-S31 yet */
+    RUN_TEST("wifi_csi",               test_wifi_csi);
+#endif
 #endif
 #if SOC_EMAC_SUPPORTED
     RUN_TEST("eth",                    test_eth);

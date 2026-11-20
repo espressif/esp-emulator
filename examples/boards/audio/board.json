@@ -1,0 +1,4 @@
+{ "parts": {
+    "mic": { "module": "inmp441.wasm", "pins": { "SD": 7 } },
+    "amp": { "module": "max98357a.wasm", "pins": { "DIN": 6 } }
+} }

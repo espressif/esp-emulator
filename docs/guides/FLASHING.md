@@ -59,6 +59,7 @@ End-to-end verified on **C3, C5, C6, H2, P4, S3, and S31**:
 | `espefuse summary`          | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `espefuse get-custom-mac`   | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `espefuse burn-custom-mac`  | ✅ | ❌² | ✅ | ✅ | ✅ | ✅ | ✅ |
+
 ¹ S31 has no chip ID; esptool reports the MAC instead (same as on silicon).
 
 ² `espefuse burn-custom-mac` is the one command C5 cannot run. espefuse derives

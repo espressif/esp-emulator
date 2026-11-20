@@ -1,0 +1,3 @@
+{ "parts": {
+    "ir": { "module": "vs1838b.wasm", "pins": { "OUT": 4 } }
+} }

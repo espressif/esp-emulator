@@ -10,7 +10,7 @@ The emulator includes a built-in WiFi soft access point with WPA2-PSK and WPA3-P
 2. **Authenticate** — Open System, or SAE commit/confirm for WPA3
 3. **Associate** — AP assigns AID=1
 4. **4-way handshake** — Full EAPOL handshake with the PSK or SAE key (when password is set), including the IGTK for PMF
-5. **DHCP** — Built-in DHCP server assigns 192.168.4.2 (gateway 192.168.4.1)
+5. **DHCP** — Built-in DHCP server assigns the subnet's `.2` with the gateway at `.1` (192.168.4.2 and 192.168.4.1 by default; see [Addresses and `net=`](#addresses-and-net))
 
 This works automatically — ESP-IDF WiFi station firmware will connect and receive an IP address. Use `--wifi-ssid` and `--wifi-password` to match your firmware's WiFi configuration. Default: SSID `myssid`, password `mypassword`.
 
@@ -36,6 +36,65 @@ private_key=server.key
 To test a firmware's security policy rather than its connection, pin the AP: `--wifi-auth wpa3-sae` is a WPA3-only network (PMF required, a PSK association is refused), `--wifi-auth wpa2-psk` is the pre-0.45 WPA2-only AP that WPA3-only firmware must reject, and `--wifi-sae-pwe hunt-and-peck` hides hash-to-element so a firmware set to `WPA3_SAE_PWE_HASH_TO_ELEMENT` fails as it would on a legacy AP.
 
 For real network connectivity, run with either [User-mode Networking](#user-mode-networking-no-host-setup) (zero setup, the default when `--net` is omitted and no `tap0` is available) or [TAP Networking](#tap-networking) (bridged to host interface; picked automatically on Linux when `tap0` is set up).
+
+### Wi-Fi CSI
+
+Firmware that turns on channel state information with `esp_wifi_set_csi_config()`,
+`esp_wifi_set_csi_rx_cb()` and `esp_wifi_set_csi(true)` gets its callback called for
+the frames the station receives, with no firmware change and no flag: the emulator
+honours the driver's CSI enable bit and places a CSI block in each received frame's
+buffer exactly where the driver looks for it, so `wifi_csi_info_t` arrives with
+`buf`, `len`, `rx_ctrl` (RSSI, noise floor, `sig_len`, channel, timestamp), the
+source and destination MAC and the frame header and payload pointers filled in by
+the stock driver. Supported on ESP32-C3, ESP32-S3, ESP32-C6 and ESP32-C5. Not on
+ESP32-S31 yet: its callback is never called. Firmware that leaves CSI off
+receives exactly the frames it received before.
+
+There is no radio, so the bytes are not a measured channel:
+
+- **Default**: a synthetic flat channel, HT20's 64 subcarriers as 128 bytes of
+  int8 (imaginary, real) pairs of (0, 32), RSSI -30 dBm, noise floor -95 dBm. It
+  exercises the CSI path; a motion detector sees a static room.
+- **`--csi-replay FILE`**: a recording taken on silicon, one record per line as
+  `RSSI NOISE_FLOOR HEX` (both in dBm, then the CSI `buf` bytes as hex digits;
+  `#` starts a comment). Each received frame takes the next record, so a firmware's
+  calibration and detection run on real channel data. When the file runs out,
+  later frames carry no CSI; `--csi-replay-loop` restarts it instead. Record the
+  bytes on the same chip family the recording is replayed into: the classic
+  (C3/S3) and HE (C5/C6) chips order and scale subcarriers differently.
+
+```sh
+# recording.csi — written by your own firmware's CSI callback on hardware
+# -42 -95 0a1f0b1e0c1d...
+esp-emu --chip esp32c3 --firmware build/merged_flash.bin \
+  --csi-replay recording.csi --csi-replay-loop
+```
+
+A frame that carries CSI is reported as an HT 20 MHz frame with no hardware
+error (`sig_mode` 1 and `cwb` 0 on C3/S3; `cur_bb_format` HT, `second` 0,
+`rx_channel_estimate_info_vld` 1 and `rxend_state` 0 on C5/C6; `rx_state` 0
+everywhere), which is what CSI consumers filter on: ESPectre's default `ht20`
+profile accepts every frame and runs its calibration on the replayed data. If the
+firmware's acquisition config asks for the legacy L-LTF only (`lltf_en` without
+`htltf_en`; `acquire_csi_legacy` without `acquire_csi_ht20`), the frames are
+reported as 802.11g instead. The other acquisition settings (scaling, the channel
+filter, STBC) do not change the bytes, and the frames do not need to be data
+frames: every frame the emulator places in a receive buffer while CSI is on
+carries one record, so a firmware that filters on `rx_ctrl` or the frame header
+does so on the fields the driver fills. Verified with the ESPectre native
+firmware built on ESP-IDF 5.5 on C3, S3, C6 and C5.
+
+Two limits:
+
+- **CSI comes with traffic.** Once the station is associated, the soft AP's
+  beacons reach a receive buffer rarely (ESP32-C5 and ESP32-C6) or not at all
+  (ESP32-C3 and ESP32-S3), so an idle connection brings few or no callbacks.
+  Firmware that wants a steady stream has to cause one, as ESPectre does by
+  pinging the gateway.
+- **A frame is never cut short to carry CSI.** A frame that fills its receive
+  buffer, such as a full-size packet of a download in the driver's 1600-byte
+  buffers, arrives whole and without CSI; a replayed record then goes to the
+  next frame it fits beside.
 
 ## Ethernet Emulation (OpenETH)
 
@@ -86,9 +145,26 @@ esp-emu \
   --net user
 ```
 
-Addressing matches the WiFi soft AP (`192.168.4.0/24`, guest `192.168.4.2`,
-gateway `192.168.4.1`). Traffic to the gateway IP is redirected to
-`127.0.0.1` on the host, mirroring slirp's `10.0.2.2` convention.
+### Addresses and `net=`
+
+The network is one subnet: the gateway is its `.1`, which is also the DNS
+server, and the firmware gets its `.2`. Without options the subnet is
+`192.168.4.0/24` (gateway `192.168.4.1`, firmware `192.168.4.2`). Traffic to
+the gateway IP is redirected to `127.0.0.1` on the host, so a service the
+firmware reaches there must be one you trust with what it sends, and the whole
+subnet belongs to the emulator: a real host on your LAN inside it is not
+reachable from the firmware. `net=` picks another subnet, for `--net user` and
+`--net tap` alike (`vmnet` takes no `net=`):
+
+```sh
+esp-emu ... --net "user,net=10.0.2.0/24"   # gateway 10.0.2.1, firmware 10.0.2.2
+```
+
+The subnet must be private, `/8` to `/30`, with its host bits clear. The
+default is deprecated, and the emulator says so at start-up: it is the subnet
+ESP-IDF gives a firmware's own soft AP, so a firmware running AP and station at
+once routes its station's traffic to its own AP, and a future release changes
+the default to `10.0.2.0/24`. Pass `net=192.168.4.0/24` to keep it.
 
 ### What's included
 
@@ -96,7 +172,8 @@ gateway `192.168.4.1`). Traffic to the gateway IP is redirected to
   OpenETH paths
 - **TCP/UDP outbound NAT** via smoltcp's TCP stack + non-blocking host sockets
 - **Built-in DNS forwarder**: parses `/etc/resolv.conf`; the guest is told the
-  gateway is its DNS server and queries are forwarded transparently
+  gateway (the subnet's `.1`) is its DNS server, and queries to it are
+  forwarded to the host's resolvers
 - **mDNS relay**: binds `224.0.0.251:5353` on the host (via `SO_REUSEPORT`, so
   it coexists with Avahi / systemd-resolved) and proxies multicast queries
 - **IPv6**: smoltcp IPv6 stack, link-local + ULA addresses, Router Advertisement
@@ -141,6 +218,16 @@ softAP provisioning with `esp_prov --transport softap --service_name
 127.0.0.1:18080` works end to end. UDP `hostfwd` rules only reach the firmware
 through its station. WPA3-SAE-only and hidden-SSID APs are not supported, and a
 wrong password stops the station after three failed handshakes.
+
+An APSTA firmware whose AP is on the emulator's subnet, as on the default
+`192.168.4.0/24` with ESP-IDF's default AP address `192.168.4.1`, sends its
+station's gateway and DNS traffic to its own AP while that AP is up: name
+lookups fail right after SoftAP provisioning, for one. The emulator warns
+when it joins such an AP; run it with `net=10.0.2.0/24`:
+
+```sh
+esp-emu ... --net "user,net=10.0.2.0/24,hostfwd=tcp::18080-:80"
+```
 
 ### mDNS NAT (Matter, HomeKit, etc.)
 
@@ -207,6 +294,10 @@ esp-emu \
 # Cleanup
 sudo ./tools/setup-tap.sh --teardown
 ```
+
+For another subnet give both sides the same one:
+`sudo ./tools/setup-tap.sh --subnet 10.0.2.0/24 --gateway 10.0.2.1`, then
+`--net "tap,ifname=tap0,net=10.0.2.0/24"`.
 
 ### macOS (vmnet)
 

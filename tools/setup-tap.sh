@@ -22,6 +22,10 @@
 #   --ipv6                Enable IPv6 with global prefix from outbound interface
 #   --teardown            Remove TAP interface and iptables rules
 #   -h, --help            Show this help message
+#
+# The gateway must be the one esp-emu's DHCP gives the firmware, the subnet's
+# .1. For another subnet give esp-emu the same one: with --subnet 10.0.2.0/24
+# --gateway 10.0.2.1, run esp-emu --net tap,ifname=tap0,net=10.0.2.0/24.
 
 set -euo pipefail
 
@@ -116,6 +120,19 @@ setup() {
     echo "  Subnet:             $SUBNET"
     echo "  Gateway IP:         $GATEWAY_IP"
     echo "  TAP owner:          $TAP_USER"
+
+    # esp-emu gives the firmware this subnet itself, so it must not already be
+    # reachable through another interface (a VirtualBox or QEMU NAT guest's eth0
+    # is 10.0.2.15/24).
+    local conflict
+    conflict=$(ip -4 route show root "$SUBNET" | grep -v " dev $TAP_NAME\b" || true)
+    if [[ -n "$conflict" ]]; then
+        echo "Error: $SUBNET is already routed through another interface:" >&2
+        echo "$conflict" | sed 's/^/  /' >&2
+        echo "Pick a free subnet with --subnet/--gateway and pass the same net= to esp-emu's --net," >&2
+        echo "or use --net user on this host." >&2
+        exit 1
+    fi
 
     # Create TAP interface
     if ip link show "$TAP_NAME" &>/dev/null; then

@@ -10,8 +10,9 @@
  * voltage on the pad (a potentiometer's wiper, a thermistor divider's
  * output), and nothing here knows it is virtual.
  *
- * The pad is GPIO 3, GPIO 43 on the S31 (ADC1 channel 1, a P input), read at
- * 12 dB, at 0 dB on the S31, the one range it has. The millivolts come from
+ * The pad is GPIO 3, GPIO 43 on the S31 (ADC1 channel 1, a P input) and
+ * GPIO 20 on the P4 (ADC1 channel 4), read at 12 dB, at 0 dB on the S31, the
+ * one range it has. The millivolts come from
  * the chip's calibration scheme (curve fitting, line fitting on the S31);
  * where the eFuse carries no calibration the line says `mv=-`.
  *
@@ -30,6 +31,9 @@
 #if CONFIG_IDF_TARGET_ESP32S31
 #define PAD 43
 #define ATTEN ADC_ATTEN_DB_0
+#elif CONFIG_IDF_TARGET_ESP32P4
+#define PAD 20
+#define ATTEN ADC_ATTEN_DB_12
 #else
 #define PAD 3
 #define ATTEN ADC_ATTEN_DB_12

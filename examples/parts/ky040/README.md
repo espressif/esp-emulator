@@ -28,8 +28,10 @@ turns at most 25 to 100 detents a second, depending on the chip and on how
 much its firmware sleeps ([PARTS.md](../../../docs/guides/PARTS.md#time-inside-a-part)
 has the figures). Turned faster, the turns wait in the part and play out in
 order afterwards: the count comes out right, later. No edge is dropped. The
-switch goes ahead of any edges still to come. Several edges a poll, which
-lifts the limit, is planned with the pulse signals.
+switch goes ahead of any edges still to come. A part may hand over several
+edges in one poll, stamped ahead
+([PARTS.md](../../../docs/guides/PARTS.md#time-inside-a-part)); this one
+stamps each with the poll's time, so it keeps to one a heartbeat.
 
 ## What it does not model
 

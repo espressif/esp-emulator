@@ -1,0 +1,5 @@
+{ "parts": {
+    "camera": { "module": "ov2640.wasm", "pins": {
+        "D0": 4, "D1": 5, "D2": 6, "D3": 7, "D4": 8, "D5": 9, "D6": 10, "D7": 11,
+        "PCLK": 12, "VSYNC": 13, "HREF": 14, "XCLK": 15, "SIOC": 16, "SIOD": 17 } }
+} }

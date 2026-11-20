@@ -157,8 +157,8 @@ static bool test_ciphertext_differs_from_plaintext(void)
  *
  * Not a register-layout mismatch: XTS_AES LINESIZE/DESTINATION/PHYSICAL_ADDRESS
  * /TRIGGER/RELEASE/DESTROY/STATE sit at identical offsets on C3 and C6 and
- * match src/periph/crypto/xts_aes.rs, and the write-completion path in
- * bus.rs::execute_pending_spi_op is chip-agnostic. */
+ * match the emulator's XTS-AES model, and its write-completion path is
+ * chip-agnostic. */
 /* Encrypted writes have to survive a round trip through the XTS engine, at an
  * offset that is not sector-aligned in the ciphertext block sense. */
 static bool test_encrypted_write_read(void)

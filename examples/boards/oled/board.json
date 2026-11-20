@@ -1,0 +1,4 @@
+{ "parts": {
+    "oled": { "module": "ssd1306.wasm", "pins": { "SCL": 6, "SDA": 5 } },
+    "button": { "module": "pushbutton.wasm", "pins": { "A": 9 } }
+} }
