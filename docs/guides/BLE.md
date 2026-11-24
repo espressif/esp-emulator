@@ -1,10 +1,14 @@
 # BLE Emulation
 
-Running NimBLE and Bluedroid firmware against a virtual controller (Bumble) or a physical Linux HCI adapter. Matter over BLE is covered in [MATTER.md](MATTER.md).
+Running NimBLE and Bluedroid firmware against a [virtual controller](#virtual-controllers) or a [physical Linux HCI adapter](#physical-adapter-linux). Matter over BLE is covered in [MATTER.md](MATTER.md).
 
 BLE firmware runs natively in the emulator: the NimBLE host stack on every BLE chip, Bluedroid on ESP32-S31 (its BTDM controller's standard VHCI driver is intercepted the same way), and Rust [esp-hal](https://github.com/esp-rs/esp-hal) / `esp-radio` firmware on ESP32-C3, C5, C6 and H2 (see [esp-hal / esp-radio firmware](#esp-hal--esp-radio-firmware)). HCI commands are either handled by a built-in virtual controller or forwarded to an external backend via `--ble-hci`. Requires `--elf` to provide firmware symbols for HCI interception.
 
-## Bumble (software-only, no hardware needed)
+## Virtual controllers
+
+Both options run entirely in software and require no Bluetooth hardware.
+
+### Bumble
 
 [Google Bumble](https://github.com/google/bumble) acts as a virtual BLE controller and GATT client over TCP.
 
@@ -19,6 +23,55 @@ esp-emu \
 ```
 
 The test script scans, connects, discovers GATT services, reads/writes characteristics, and subscribes to notifications. Works with ESP32-C3, ESP32-C5, ESP32-C6, ESP32-H2, and ESP32-S3.
+
+### BSController (with over-the-air packet captures)
+
+[BSController](https://github.com/XiaoMi/bsworld/tree/main/components/bscontroller) connects BLE controllers through a shared BabbleSim PHY. Use it to inspect radio traffic alongside HCI commands and events, or to put multiple emulated devices and test peers on the same PHY. The example below uses ESP32-C3 `bleprph` and a Bumble Host as the GATT client.
+
+[Build BabbleSim and set `BSIM_OUT_PATH`](https://github.com/XiaoMi/bsworld/tree/main/components/bscontroller#quick-start). On Ubuntu 24.04, set up the host tools with the following commands.
+
+```sh
+sudo apt install socat
+pip3 install 'bscontroller[bumble]'
+```
+
+Start two controllers on the same PHY. The first socket is for ESP-EMU, and the second is for the GATT client.
+
+```sh
+bscontroller serve \
+  --hci-socket /tmp/esp-ble/esp.sock /tmp/esp-ble/peer.sock \
+  --realtime --capture-air --log-dir /tmp/esp-ble/captures
+```
+
+Once BSController lists both sockets, run the TCP-to-Unix H4 bridge in a second terminal.
+
+```sh
+socat TCP-LISTEN:9544,bind=127.0.0.1,reuseaddr UNIX-CONNECT:/tmp/esp-ble/esp.sock
+```
+
+Run the firmware in a third terminal.
+
+```sh
+esp-emu \
+  --chip esp32c3 \
+  --firmware build/merged_flash.bin \
+  --elf build/bleprph.elf \
+  --ble-hci tcp:127.0.0.1:9544
+```
+
+Use the second controller to find the peripheral by name, connect to it, and inspect its GATT database.
+
+```sh
+bumble-gatt-dump unix:/tmp/esp-ble/peer.sock nimble-bleprph
+```
+
+Stop `bscontroller serve` after the run to finalize the captures in `/tmp/esp-ble/captures/`.
+
+| File | Contents |
+| --- | --- |
+| `hci0.btsnoop`, `hci1.btsnoop` | HCI traffic on the ESP-EMU and GATT client sides. |
+| `radio0.pcapng`, `radio1.pcapng` | Packets transmitted by each controller and packets the PHY returned to it during reception. Open these in Wireshark to inspect individual radio packets. |
+| `ellisys.bttrp` | Transmissions from both controllers in one Ellisys trace. |
 
 ## Physical adapter (Linux)
 
