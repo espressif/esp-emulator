@@ -8,6 +8,7 @@
 #
 # Usage:
 #   ./tools/make-efuse.py --chip esp32c3 --chip-rev 1.1 -o c3_rev1p1.efuse
+#   ./tools/make-efuse.py --chip esp32 --chip-rev 3.0 -o esp32.efuse
 #   esp-emu --chip esp32c3 --firmware merged_flash.bin --efuse c3_rev1p1.efuse
 #
 # --chip-rev takes either MAJOR.MINOR (1.1) or ESP-IDF's integer form (101, as
@@ -64,7 +65,7 @@ CHIPS = {
         "max_rev": 199,
         "minor": [(1, 114, 3)],
         "major": [(1, 117, 2)],
-        "calib": (2, 130, 3, 1),
+        "calib": (2, 130, 3, 2),  # BLK_VERSION_MINOR = 2: H2's ADC calibration needs v0.2
         "inject_bits": [(3, 2 << 18)],
     },
     "esp32p4": {
@@ -148,40 +149,95 @@ def effective(chip, words):
     return get(words, spec["major"]), get(words, spec["minor"])
 
 
+def mac_crc8(mac):
+    """esp_rom_efuse_mac_address_crc8: reflected polynomial 0x8C."""
+    crc = 0
+    for byte in mac:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0x8C if crc & 1 else crc >> 1
+    return crc
+
+
+def esp32_image(major, minor, mac):
+    """ESP32's file: BLK0's seven words, then BLK1-3 (124 bytes, as QEMU's).
+
+    efuse_ll combines CHIP_VER_REV1 (word 3 bit 15), CHIP_VER_REV2 (word 5
+    bit 20) and bit 31 of APB_CTRL_DATE, which esp-emu's ESP32 always sets:
+    both fuses make v3, neither makes v0. WAFER_VERSION_MINOR is word 5
+    bits 24-25. CK8M_FREQ (word 4) is what the ROM tells the crystal by.
+    """
+    if major not in (0, 3) or not 0 <= minor <= 3:
+        raise ValueError
+    blk0 = [0] * 7
+    blk0[1] = int.from_bytes(mac[2:6], "big")
+    blk0[2] = mac_crc8(mac) << 16 | int.from_bytes(mac[0:2], "big")
+    blk0[4] = 53
+    blk0[5] = minor << 24
+    if major == 3:
+        blk0[3] |= 1 << 15
+        blk0[5] |= 1 << 20
+    return struct.pack("<7I", *blk0) + bytes(3 * 32)
+
+
+def parse_mac(text):
+    """argparse type: six colon-separated hex bytes."""
+    try:
+        mac = bytes(int(b, 16) for b in text.split(":"))
+    except ValueError:
+        mac = b""
+    if len(mac) != 6:
+        raise argparse.ArgumentTypeError("a MAC is 6 colon-separated hex bytes")
+    return mac
+
+
+def blank_words(chip, mac, calib=True):
+    """A blank chip's file as words: the factory MAC and the calibration default.
+
+    MAC_FACTORY is read back in reverse byte order, so BLK1 word 0 holds
+    mac[2..5] and word 1 mac[0..1]. A blob supplies the whole eFuse image, so
+    skipping this would boot the firmware with MAC 00:00:00:00:00:00.
+    """
+    words = [0] * NWORDS
+    words[BLK_WORD_BASE[1] + 0] = int.from_bytes(mac[2:6], "big")
+    words[BLK_WORD_BASE[1] + 1] = int.from_bytes(mac[0:2], "big")
+    if CHIPS[chip]["calib"] and calib:
+        blk, bit, width, val = CHIPS[chip]["calib"]
+        put(words, [(blk, bit, width)], val)
+    return words
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--chip", required=True, choices=sorted(CHIPS))
+    p.add_argument("--chip", required=True, choices=sorted([*CHIPS, "esp32"]))
     p.add_argument("--chip-rev", required=True, metavar="MAJOR.MINOR",
                    help="silicon revision, e.g. 1.1 or IDF's integer form 101")
-    p.add_argument("--mac", default="24:0A:C4:00:00:01",
+    p.add_argument("--mac", default="24:0A:C4:00:00:01", type=parse_mac,
                    help="factory MAC (default: esp-emu's own default)")
     p.add_argument("--no-calib", action="store_true",
                    help="leave BLK_VERSION at v0.0 instead of the chip default")
     p.add_argument("-o", "--output", required=True)
     a = p.parse_args()
 
-    spec = CHIPS[a.chip]
     major, minor = parse_rev(a.chip_rev)
-    words = [0] * NWORDS
+    if a.chip == "esp32":
+        try:
+            image = esp32_image(major, minor, a.mac)
+        except ValueError:
+            p.error("esp-emu's ESP32 is v3.0-v3.3, or v0.0-v0.3 with both version fuses blank")
+        with open(a.output, "wb") as f:
+            f.write(image)
+        print(f"{a.output}: esp32 rev v{major}.{minor}, MAC {a.mac.hex(':').upper()}")
+        return 0
 
-    # MAC_FACTORY is read back in reverse byte order, so BLK1 word 0 holds
-    # mac[2..5] and word 1 mac[0..1]. A blob supplies the whole eFuse image, so
-    # skipping this would boot the firmware with MAC 00:00:00:00:00:00.
-    mac = bytes(int(b, 16) for b in a.mac.split(":"))
-    if len(mac) != 6:
-        p.error("--mac must be 6 colon-separated hex bytes")
-    words[BLK_WORD_BASE[1] + 0] = int.from_bytes(mac[2:6], "big")
-    words[BLK_WORD_BASE[1] + 1] = int.from_bytes(mac[0:2], "big")
+    spec = CHIPS[a.chip]
+    words = blank_words(a.chip, a.mac, calib=not a.no_calib)
 
     try:
         put(words, spec["minor"], minor)
         put(words, spec["major"], major)
     except ValueError:
         p.error(f"v{major}.{minor} does not fit {a.chip}'s wafer-version fields")
-
-    if spec["calib"] and not a.no_calib:
-        blk, bit, width, val = spec["calib"]
-        put(words, [(blk, bit, width)], val)
 
     # esp-emu re-injects its default wafer bits when every masked wafer field
     # reads zero, so a blob asking for v0.0 comes back as the chip default.
@@ -204,7 +260,7 @@ def main():
 
     with open(a.output, "wb") as f:
         f.write(b"".join(struct.pack("<I", w) for w in words))
-    print(f"{a.output}: {a.chip} rev v{major}.{minor}, MAC {a.mac}")
+    print(f"{a.output}: {a.chip} rev v{major}.{minor}, MAC {a.mac.hex(':').upper()}")
     return 0
 
 

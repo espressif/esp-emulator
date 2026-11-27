@@ -1,5 +1,6 @@
-# The ESP32-S3 TIE board-vs-emulator differential test (tools/internal/pie/silicon):
-# the full case set (main/ee/full/, from gen_s3.py) instead of the smoke suite.
+# The ESP32-S3 TIE board-vs-emulator differential test (tools/internal/pie/silicon
+# in the emulator's source tree, not in the release mirror): the full case set
+# (main/ee/full/, from gen_s3.py there) instead of the smoke suite.
 # Add after sdkconfig.defaults and sdkconfig.defaults.esp32s3, in a build
 # directory of its own.
 CONFIG_EMU_TEST_EE_FULL=y

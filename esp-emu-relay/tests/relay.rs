@@ -372,6 +372,8 @@ fn read_until_quiet(ws: &mut Client, quiet: Duration) -> usize {
             Ok(Message::Binary(data)) => got += data.len(),
             Ok(_) => {}
             Err(Error::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => return got,
+            // A signal can cut the blocking read short; it is not the end of the data.
+            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(e) => panic!("{e}"),
         }
     }

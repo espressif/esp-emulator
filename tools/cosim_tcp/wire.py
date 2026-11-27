@@ -133,6 +133,12 @@ def dsi_claim(virtual_channel=0):
     return ld(20, field(1, varint(virtual_channel)))                 # Claim.dsi
 
 
+def analog_claim(pin):
+    """The source of the voltage on an analog pad: may send analog_drive and
+    analog_wave for it."""
+    return ld(5, field(1, varint(pin)))                              # Claim.analog
+
+
 def en_claim():
     """Wired to the chip's EN (CHIP_PU) pin: may pull it low with en_drive."""
     return ld(19, b"")                                               # Claim.en
@@ -146,6 +152,12 @@ def csi_claim():
 def time_claim():
     """Holds the clock: the chip runs only as far as time_grant lets it."""
     return ld(23, b"")                                               # Claim.time
+
+
+def usb_host_claim(port=0):
+    """The USB host on a USB-OTG port: the emulator's own host leaves it,
+    usb_link says when a device is there and usb_transfer runs transfers."""
+    return ld(24, field(1, varint(port)))                            # Claim.usb_host
 
 
 def register(name, *claims):
@@ -165,6 +177,20 @@ def pulse_drive(at_ns, pin, first_level, widths_ns):
     packed = b"".join(varint(w) for w in widths_ns)
     p = field(1, varint(pin)) + field(2, varint(int(first_level))) + ld(3, packed)
     return field(1, varint(at_ns)) + ld(14, p)                       # sim_time_ns, pulse_drive
+
+
+def analog_drive(at_ns, pin, millivolts):
+    """`millivolts` on an analog pad from `at_ns` until the next voltage."""
+    a = field(1, varint(pin)) + field(2, varint(millivolts))
+    return field(1, varint(at_ns)) + ld(13, a)                       # sim_time_ns, analog_drive
+
+
+def analog_wave(at_ns, pin, period_ns, millivolts):
+    """`millivolts[k]` on an analog pad from `at_ns + k * period_ns`, at most
+    4096, the last held; in place of what the pad was set to from `at_ns` on."""
+    packed = b"".join(varint(mv) for mv in millivolts)
+    w = field(1, varint(pin)) + field(2, varint(period_ns)) + ld(3, packed)
+    return field(1, varint(at_ns)) + ld(42, w)                       # sim_time_ns, analog_wave
 
 
 def gpio_level(payload):
@@ -282,10 +308,64 @@ def spi_master_result(payload):
     return r.get(1, 0), bool(r.get(2, 0)), r.get(3, b""), msg.get(SIM_TIME, 0)
 
 
+USB_SPEEDS = {0: None, 1: "full", 2: "high"}
+USB_STATUS = {0: "unspecified", 1: "ok", 2: "stall", 3: "timeout", 4: "no-device", 5: "overflow", 6: "refused"}
+
+
+def usb_transfer(at_ns, ident, endpoint, setup=b"", data=b"", length=0, timeout_us=0):
+    """One transfer as the USB host, started at `at_ns`: a control transfer
+    with its 8-byte `setup` on endpoint 0, else `data` out or up to `length`
+    bytes in (endpoint bit 7). A UsbResult quoting `ident` says how it ended.
+    Needs usb_host_claim."""
+    t = field(1, varint(ident)) + field(2, varint(endpoint))
+    if setup:
+        t += ld(3, setup)
+    if data:
+        t += ld(4, data)
+    if length:
+        t += field(5, varint(length))
+    if timeout_us:
+        t += field(6, varint(timeout_us))
+    return field(1, varint(at_ns)) + ld(44, t)                       # sim_time_ns, usb_transfer
+
+
+def usb_link(payload):
+    """`(attached, speed)` of a frame's UsbLink, else None: speed is "full"
+    or "high", None while no device is there."""
+    msg = message(payload)
+    if 43 not in msg:                                                # EmulatorMessage.usb_link
+        return None
+    l = decode(msg[43])
+    return bool(l.get(1, 0)), USB_SPEEDS.get(l.get(2, 0))
+
+
+def usb_result(payload):
+    """`(ident, status, data, sent)` of a frame's UsbResult, else None:
+    `status` is a word of USB_STATUS, `data` what the device sent, `sent`
+    how much of the transfer's data it took."""
+    msg = message(payload)
+    if 45 not in msg:                                                # EmulatorMessage.usb_result
+        return None
+    r = decode(msg[45])
+    return r.get(1, 0), USB_STATUS.get(r.get(2, 0), "unspecified"), r.get(3, b""), r.get(4, 0)
+
+
 def time_grant(advance_ns):
     """Let the chip run `advance_ns` more of emulated time. Grants add up.
     Needs time_claim."""
     return ld(40, field(1, varint(advance_ns)))                      # EmulatorMessage.time_grant
+
+
+def clock_sync(payload):
+    """A heartbeat's counters, {events_fired_late, max_lateness_ns,
+    broadcasts_dropped, scheduled_dropped}, when a frame is a ClockSync,
+    else None."""
+    msg = message(payload)
+    if 2 not in msg:                                                 # EmulatorMessage.clock_sync
+        return None
+    c = decode(msg[2])
+    names = ("events_fired_late", "max_lateness_ns", "broadcasts_dropped", "scheduled_dropped")
+    return {name: c.get(i + 1, 0) for i, name in enumerate(names)}
 
 
 def time_waiting(payload):
@@ -440,7 +520,10 @@ EVENTS = [
     ("gpio", gpio_level, True),
     ("edges", gpio_edges, True),
     ("spi_result", spi_master_result, True),
+    ("usb_link", usb_link, True),
+    ("usb_result", usb_result, True),
     ("time_waiting", time_waiting, False),
+    ("clock_sync", clock_sync, False),
     ("i2s_format", i2s_format, True),
     ("i2s_out", i2s_out, False),
     ("dvp_format", dvp_format, False),

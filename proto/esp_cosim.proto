@@ -119,6 +119,8 @@ message EmulatorMessage {
 
     // A voltage on an analog pad, on ROUTER. See AnalogClaim.
     AnalogDrive analog_drive = 13;  // consumer -> emu
+    // Voltages on an analog pad one period apart, on ROUTER. See AnalogWave.
+    AnalogWave analog_wave = 42;  // consumer -> emu
 
     // A timed waveform played into a pin, on ROUTER. See PulseDrive.
     PulseDrive pulse_drive = 14;  // consumer -> emu
@@ -153,6 +155,12 @@ message EmulatorMessage {
     // See TimeClaim.
     TimeGrant time_grant = 40;      // consumer -> emu
     TimeWaiting time_waiting = 41;  // emu -> consumer
+
+    // A USB host outside the emulator, the chip its device, on ROUTER.
+    // See UsbHostClaim.
+    UsbLink usb_link = 43;          // emu -> consumer
+    UsbTransfer usb_transfer = 44;  // consumer -> emu
+    UsbResult usb_result = 45;      // emu -> consumer
   }
 }
 
@@ -198,8 +206,9 @@ message ChipReset {
 // events_fired_late below tells you it happened.
 message ClockSync {
   // Cumulative count of scheduled events whose sim_time_ns had already passed
-  // when the emulator dequeued them. Zero means every event you scheduled
-  // landed where you asked. A test that cares about timing should assert this
+  // when the emulator dequeued them, and of AnalogDrives whose sim_time_ns had
+  // passed when they arrived. Zero means every event you scheduled landed
+  // where you asked. A test that cares about timing should assert this
   // is still zero at the end of the run.
   uint64 events_fired_late = 1;
 
@@ -226,6 +235,9 @@ message ClockSync {
   // Nonzero means somebody is scheduling deeper than this bus is built for.
   // The fix is not a bigger queue: hold your own deadline and act on it when
   // a ClockSync shows the clock has passed it.
+  //
+  // AnalogDrives take no room in this queue; one refused because its pad
+  // keeps as many voltages ahead of the clock as it can counts here too.
   uint64 scheduled_dropped = 4;
 }
 
@@ -268,6 +280,10 @@ message Register {
   // What this consumer answers for. Empty is legal and means this peer only
   // watches: it receives everything it subscribes to and is never asked to
   // answer anything.
+  //
+  // Over --cosim-tcp, GpioLevel broadcasts go to a consumer with a GpioClaim
+  // (an empty one will do) and to one with no claim at all; one with claims
+  // of other kinds only is sent none.
   //
   // This is how a board's wiring reaches the emulator without the emulator
   // ever reading a board file. Whatever describes the board - a studio's
@@ -373,6 +389,7 @@ message Claim {
     CsiClaim csi = 21;
     SpiMasterClaim spi_master = 22;
     TimeClaim time = 23;
+    UsbHostClaim usb_host = 24;
   }
 }
 
@@ -618,6 +635,145 @@ message SpiMasterResult {
   // 64 bytes of its buffer registers whatever they hold, the last transfer's
   // received bytes if the firmware loaded nothing since.
   bytes rx = 3;
+}
+
+// "I am the USB host at the other end of this port's cable."
+//
+// The chip is a USB device (TinyUSB or any other stack on its USB-OTG
+// controller) and the consumer the computer it is plugged into: it
+// enumerates the device and runs every transfer, with UsbTransfer. Without a
+// claim the emulator's own host is on the port: it enumerates whatever the
+// firmware presents and serves a CDC-ACM console. With one, that host is off
+// the port and nothing is sent the device but what the consumer sends.
+//
+// The port is the controller: its D+ and D- are pads of the PHY, not of the
+// GPIO matrix, so there is no routing to follow. Ports count from 0 in the
+// order of the chip's USB-OTG controllers: ESP32-P4 0 high speed, 1 full
+// speed; ESP32-S3 0 full speed; ESP32-S31 0 high speed. A chip without one
+// refuses the claim.
+//
+// The emulator keeps the electrical end of the link: when the firmware turns
+// its pull-up on, the bus is reset and the consumer is told the device is
+// there and at what speed (UsbLink). Everything above that is the
+// consumer's, from the first GET_DESCRIPTOR. A device the emulator's own
+// host had configured is reset when a consumer takes the port, and again
+// when it leaves and that host comes back.
+//
+// Transfers cross, not packets: no tokens, handshakes, data toggles or
+// frame numbers, and no device address, since one device is on the cable.
+// Control, bulk and interrupt endpoints; an isochronous endpoint is served
+// like a bulk one, with none of its timing. Suspend, resume, remote wake-up
+// and a reset the host asks for are not modelled, nor is the cable being
+// pulled: the device stays attached until its firmware detaches.
+//
+// One UsbHostClaim per consumer: a UsbTransfer names no port, so the
+// emulator takes it from the claim. A port another consumer claims is
+// refused.
+//
+// A .wasm part may hold one: it is told UsbLink and UsbResult through
+// part_on_message and sends its UsbTransfers from part_poll. A result that
+// does not fit its buffer is not handed over, so it asks for no more
+// (`length`) than its buffer holds beside the envelope.
+message UsbHostClaim {
+  uint32 port = 1;
+}
+
+enum UsbSpeed {
+  USB_SPEED_UNSPECIFIED = 0;
+  USB_SPEED_FULL = 1;
+  USB_SPEED_HIGH = 2;
+}
+
+// The device at the end of the cable, on ROUTER to the consumer that claims
+// the port: sent once the claim is in, and whenever it changes.
+message UsbLink {
+  // The firmware has its pull-up on and the bus reset that follows is over:
+  // the device answers at address 0 and expects to be enumerated. False
+  // while it is detached or being reset, when a transfer finds no device.
+  //
+  // A device that detaches and attaches again, or a chip that resets, is
+  // said detached and then attached: what the host knew of it is void.
+  bool attached = 1;
+  // The speed the link came up at; unspecified while not attached.
+  UsbSpeed speed = 2;
+}
+
+// One transfer the consumer runs as the host, started at
+// EmulatorMessage.sim_time_ns through the same queue as a GpioDrive: a time
+// already past starts at once. Sent on ROUTER by a consumer that holds a
+// UsbHostClaim; every one is answered with a UsbResult.
+//
+// The emulator does not stop for it. A transfer ends when the firmware has
+// armed its endpoint and the data has moved, which takes the firmware's own
+// time; while the endpoint is not armed (NAK) the transfer waits, up to
+// `timeout_us`.
+//
+// Transfers on one endpoint run in the order sent, each after the one
+// before it has ended; transfers on different endpoints run side by side, so
+// an interrupt IN may be left waiting while control and bulk transfers go
+// on. Up to 64 may wait at once.
+message UsbTransfer {
+  // Quoted back in the UsbResult. The consumer's own; the emulator does not
+  // interpret it.
+  uint64 id = 1;
+  // The endpoint address as in its descriptor: the number in bits 0..3, bit
+  // 7 set for IN. 0 for a control transfer, whichever way its data goes.
+  uint32 endpoint = 2;
+  // A control transfer's SETUP packet, 8 bytes, and empty on every other
+  // endpoint. Its bmRequestType gives the direction of the data stage and
+  // its wLength the length: `length` is not read.
+  bytes setup = 3;
+  // What the host sends: an OUT transfer's data, or the data stage of a
+  // host-to-device control transfer (cut at wLength). Sent as packets of the
+  // endpoint's size, the last one short; empty on an OUT endpoint is one
+  // zero-length packet. Data that is a whole number of packets is not
+  // followed by a zero-length one: send that as a transfer of its own.
+  bytes data = 4;
+  // An IN transfer: the most bytes to take, up to 128 KiB, past which it is
+  // cut: the result is one message. The transfer ends
+  // when that many have come or with a packet shorter than the endpoint's
+  // size, a zero-length one included. Ask for a whole number of
+  // packets, or one may arrive that does not fit (USB_STATUS_OVERFLOW).
+  uint32 length = 5;
+  // How long the transfer may wait on an endpoint that is not armed, in
+  // microseconds of emulated time from its start. 0: until the device
+  // detaches. What moved before the time ran out is in the result.
+  uint32 timeout_us = 6;
+}
+
+enum UsbStatus {
+  USB_STATUS_UNSPECIFIED = 0;
+  // The transfer ran to its end.
+  USB_STATUS_OK = 1;
+  // The endpoint answered STALL. On a control transfer that is a request
+  // the device does not support, and the next SETUP clears it; elsewhere the
+  // endpoint is halted until the host clears it (CLEAR_FEATURE).
+  USB_STATUS_STALL = 2;
+  // `timeout_us` passed with the endpoint not armed.
+  USB_STATUS_TIMEOUT = 3;
+  // No device to run it on: detached, in reset, or it left meanwhile, the
+  // chip's own reset included.
+  USB_STATUS_NO_DEVICE = 4;
+  // The device sent a packet that does not fit in what is left of `length`,
+  // or has armed an OUT endpoint for less than a packet. The packet stays
+  // with the device.
+  USB_STATUS_OVERFLOW = 5;
+  // Not run: no such endpoint, a SETUP that is not 8 bytes or not on
+  // endpoint 0, endpoint 0 without one, or too many transfers waiting.
+  USB_STATUS_REFUSED = 6;
+}
+
+// How a UsbTransfer ended, on ROUTER to the consumer that sent it, stamped
+// (sim_time_ns) with the time the emulator saw it end.
+message UsbResult {
+  uint64 id = 1;
+  UsbStatus status = 2;
+  // What the device sent: an IN transfer's data, or the data stage of a
+  // device-to-host control transfer, cut at wLength. With a status other
+  // than OK, what had come by then.
+  bytes data = 3;
+  // How many bytes of UsbTransfer.data the device took.
+  uint32 sent = 4;
 }
 
 // "I am the serial device on these two pads."
@@ -1146,9 +1302,15 @@ message PwmState {
 }
 
 // The voltage on a pad the sender claimed (AnalogClaim), in millivolts, on
-// ROUTER. Held until the next one. Applied at sim_time_ns, through the same
-// queue as a GpioDrive: a stamp already past applies at once. Above 3300 mV,
-// the pad's supply, it is taken as 3300 and said once per pad.
+// ROUTER. Held from sim_time_ns, to the nanosecond, until the next voltage on
+// the pad in time: a conversion at or after that instant reads it, wherever
+// the chip's peripheral ticks fall, and one before it the voltage before. It
+// may be sent ahead of the clock and out of order; of two stamped with one
+// time, the one received last holds. A stamp already past holds from when it
+// arrives and counts in ClockSync.events_fired_late. A pad keeps up to 4096
+// voltages ahead of the clock; past that one is refused and counted in
+// ClockSync.scheduled_dropped. Above 3300 mV, the pad's supply, it is taken
+// as 3300 and said once per pad.
 //
 // Millivolts, not counts: the attenuation and the code are the firmware's
 // and the chip's business. A conversion of the pad reads this voltage at the
@@ -1156,9 +1318,10 @@ message PwmState {
 // own pull gives, or the converter's undriven word.
 //
 // Held across everything. A chip reset rebuilds the converter and the
-// emulator puts every held voltage back; the part is not asked again. A
-// part that detaches leaves its voltage on the pad, as a device leaves a
-// level on a wire.
+// emulator puts back the voltage each pad held when the chip reset; one
+// stamped for later is dropped, as everything scheduled is. The part is not
+// asked again. A part that detaches leaves its voltages on the pad, as a
+// device leaves a level on a wire.
 //
 // Analog and digital stay apart: this does not move the pad's digital input
 // level, and a GpioDrive does not reach the converter. IDF's ADC driver
@@ -1168,6 +1331,40 @@ message PwmState {
 message AnalogDrive {
   uint32 pin = 1;
   uint32 millivolts = 2;
+}
+
+// Voltages on a pad the sender claimed (AnalogClaim), one every period_ns, in
+// one message, on ROUTER: millivolts[k] holds from sim_time_ns + k *
+// period_ns, the last until the next voltage on the pad in time. A signal
+// sampled at a fixed rate goes as one AnalogWave a piece rather than one
+// AnalogDrive a sample: the analog twin of PulseDrive, and the shape of a
+// RESD constant-frequency block. Each voltage is an AnalogDrive's in all
+// else: held to the nanosecond, read by a conversion at its own instant,
+// above 3300 mV taken as 3300.
+//
+// A wave replaces what the pad was set to from its first voltage's time on,
+// so a model that revises what it sent ahead sends the new wave from where
+// it changed, and a long signal sent as pieces, each stamped where the one
+// before ends, plays back to back. An AnalogDrive stamped inside a wave
+// holds until the wave's next voltage.
+//
+// - Late: when sim_time_ns has passed, the voltages whose time has passed
+//   are skipped, the newest of them holding from when the wave arrives, and
+//   the rest keep their times; the skipped ones count in
+//   ClockSync.events_fired_late. Unlike a PulseDrive the wave is not moved:
+//   a voltage is the signal's value at a time, not a piece of a shape.
+// - Size: at most 4096 voltages. A pad keeps up to 4096 voltages ahead of
+//   the clock, and a wave that does not fit is refused whole, its voltages
+//   counted in ClockSync.scheduled_dropped. More than one voltage with a
+//   period_ns of 0 is refused; an empty wave changes nothing.
+// - A chip reset drops what has not played, as for an AnalogDrive: the pad
+//   keeps the voltage it held when the chip reset.
+//
+// Sent by a consumer that does not claim the pad, it is dropped and said.
+message AnalogWave {
+  uint32 pin = 1;
+  uint64 period_ns = 2;
+  repeated uint32 millivolts = 3;
 }
 
 // A bus transaction the guest waits on.

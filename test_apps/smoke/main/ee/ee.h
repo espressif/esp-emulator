@@ -8,7 +8,8 @@
  * ESP32-S3 TIE (`ee.*`) single-instruction cases: the state a case loads
  * before its instruction and stores after it, the case table that
  * tools/internal/pie/silicon/gen_s3.py emits, and the runner. How test_ee.c
- * uses them, checked or printed: tools/internal/pie/silicon/README.md.
+ * uses them, checked or printed: tools/internal/pie/silicon/README.md. Both
+ * are in the emulator's source tree, not in the release mirror.
  */
 #pragma once
 

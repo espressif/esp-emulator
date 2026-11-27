@@ -102,7 +102,12 @@ A connected device does everything a part does. It registers with its claims:
 the pins it drives, the pins it wants every transition of, the I2C address
 or SPI chip select it answers, the I2S data pads it is the audio device
 on, and the pads it is the camera sensor on. It then hears each watched pin at every transition and every other pin
-once a tick, plus the heartbeat. It drives pins at a named emulated time,
+once a tick, plus the heartbeat. Pin levels go to a device whose registration
+has a `GpioClaim`, even an empty one, and to one that registers with no claim
+at all and only watches. A device with claims of other kinds only (a clock
+holder, an I2C or SPI device) is sent none, so pads the firmware toggles are
+not sent to it; it adds a `GpioClaim` to hear them. A connection hears no
+broadcast before its registration is accepted. It drives pins at a named emulated time,
 answers bus transactions, exchanges audio with an I2S unit, and sends frames
 to the camera receiver. One that claims the chip's EN pin holds the chip in
 reset and lets it go, on emulated time. When it
@@ -354,6 +359,52 @@ pattern stops, and its frames arrive at the times it stamps them. Without a
 sensor, `--csi-sensor` answers the probe and the test pattern runs. A `.wasm`
 part can be the CSI sensor too (`examples/parts/ov5647`).
 
+`usb-host` is the computer a USB device firmware is plugged into, on a
+USB-OTG port of ESP32-S3, ESP32-P4 or ESP32-S31. Without it the emulator's
+own host enumerates the device and serves a CDC-ACM console; with it that
+host is off the port, and the consumer enumerates the device and runs every
+transfer, so a mass-storage or HID firmware has something at the other end
+of the cable:
+
+```sh
+esp-emu --chip esp32p4 --firmware tusb_msc/build/merged_flash.bin --cosim-tcp 127.0.0.1:5596 &
+python3 tools/cosim-tcp.py 5596 usb-host --msc-dump disk.img
+```
+
+It prints the device's descriptors and then plays the host of each interface
+it knows: a mass-storage disk is asked INQUIRY and READ CAPACITY and has its
+first block read (`--msc-write FILE` writes a file onto it, `--msc-dump FILE`
+reads it whole), a HID interface has its reports printed (`--reports N`
+leaves after N; add `+ press --pin N` for a button the firmware reads), and a
+CDC-ACM port is opened and what the device writes is printed. IDF's
+`tusb_msc` and `tusb_hid` examples run against it unchanged.
+
+The claim names a port, not pads (`usb_host_claim(port)`, 0 unless the chip
+has two: ESP32-P4's high-speed port is 0, its full-speed port 1). The
+emulator keeps the electrical end: when the firmware turns its pull-up on,
+the bus is reset and `usb_link(payload)` says the device is there and at
+what speed. Everything else is a transfer: `usb_transfer(at_ns, ident,
+endpoint, setup, data, length, timeout_us)` is a control transfer when it
+carries an 8-byte `setup`, else `data` out or up to `length` bytes in, and
+the `UsbResult` that answers it (`usb_result(payload)`) carries a status
+(`ok`, `stall`, `timeout`, `no-device`, `overflow`, `refused`), what the
+device sent and how much it took. The emulator never stops for a host: a
+transfer waits while the endpoint is not armed, up to its timeout, and
+transfers on different endpoints run side by side, so an interrupt IN may be
+left waiting for a report while control and bulk transfers go on. A device
+the emulator's own host had configured is reset when a consumer takes the
+port, and again when it leaves: the firmware is enumerated twice, and one
+that sends on its own while the bus is reset, as IDF's `tusb_hid` does for
+two seconds after it is mounted, may be caught mid-transfer. `--usb-host
+cosim` keeps the emulator's own host off the ports: a port is a cable in
+nothing until a consumer claims it, and again once it leaves, so the
+consumer's enumeration is the device's only one. The device is not told
+when its consumer leaves (VBUS going away is not modelled): it stays
+configured, and a transfer it has armed waits. The emulator's own host
+serves the CDC-ACM console, so `--console usb-cdc` is refused with it. Packets, data toggles, suspend and a reset
+the host asks for are not modelled, and isochronous endpoints have no
+timing. A `.wasm` part can be the host too.
+
 `dsi-view` is the panel on ESP32-P4's MIPI-DSI link: it
 draws what the firmware shows, through the stock `esp_lcd` DSI bus, DBI
 command channel and DPI panel, into a PNG:
@@ -411,7 +462,8 @@ nothing until overridden: `start` and `tick` for emulated time, `gpio`, `i2c`,
 `spi`, `i2s_format` and `i2s_out`, `dvp_format`, `csi_format`, `dsi`, `en`,
 `edges` (a run of edges of a pin claimed in `edge_pins`), `attached` (the
 emulator's answer to the registration), `spi_result` (what a transfer the
-device clocked as SPI master read back), `time_waiting` (a clock holder's
+device clocked as SPI master read back), `usb_link` and `usb_result` (the
+device on a USB port it is the host of, and how a transfer ended), `time_waiting` (a clock holder's
 grants ran out), `idle` (after every frame, for work paced by the host's
 clock), `reset`, and `closed`. `Session` connects, registers every device's claims as one consumer,
 hands an I2C transaction to the device that claimed its address and an SPI

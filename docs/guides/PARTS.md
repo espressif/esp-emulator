@@ -330,16 +330,39 @@ as a GPIO or as an analog source, is refused.
 The log then says `puts a voltage on GPIO 3`. The part sends millivolts, not
 counts. The firmware's conversion reads them at
 whatever attenuation it chose, so the same part works at 0 dB and at 12 dB.
-On the C3, C5, C6 and H2 the code follows the chip's own ADC calibration point,
+On the C5, C6 and H2 the code follows the chip's own ADC calibration point,
 so `adc_cali_raw_to_voltage` gives the part's voltage back, less the
-scheme's own curve correction: a few millivolts on the C5, C6 and H2, about
-1% at 2000 mV on the C3 at 12 dB. The H2's emulated eFuse carries no
-calibration, so there the firmware reads raw codes only. On the P4 and the S3
-the code is the one IDF's curve fitting reads back as the part's voltage,
+scheme's own curve correction: a few millivolts. On the C3, the P4 and the
+S3 the code is the one IDF's curve fitting reads back as the part's voltage,
 within 3 mV, up to the top of each attenuation's range. On the S31 the code is the one its line-fitting scheme reads,
 ±2000 mV around 0 V. A voltage holds until the part sends another, across a
 chip reset, and stays when the part goes; above the 3300 mV supply it is
-taken as 3300.
+taken as 3300. A voltage takes effect at the time it is stamped for, to the
+nanosecond, so a part may send its voltages ahead of the chip; a signal
+sampled at a fixed rate goes as `AnalogWave` pieces, one voltage a period
+(see `proto/PART_ABI.md`, "Sending a sampled voltage"). Each conversion reads
+the voltage held at its own moment, in continuous mode too: a voltage that
+changes during a DMA frame changes inside it. `tools/cosim-tcp.py PORT adc
+--pin N --sine OFFSET:AMPLITUDE:HZ` plays a sine, a square or a constant onto
+a pad over `--cosim-tcp`.
+
+What an analog part cannot do yet:
+
+- **A differential pair.** A voltage is unsigned and belongs to one pad. On
+  the S31, whose channels come as P and N pads, hold each pad's own voltage
+  against ground with its own `AnalogDrive`; the firmware reads each side as
+  a single-ended channel. The differential bit of a pattern entry is not
+  modelled, so a conversion never subtracts one pad from the other.
+- **A slope.** A voltage holds until the next one. A ramp or a ripple goes
+  as `AnalogWave`, sampled by the part at the rate it chooses; nothing
+  interpolates between two voltages.
+- **Starting a conversion from another block.** The controller's ETM trigger
+  and its ETM events are not modelled, nor are its IIR filters and threshold
+  monitors (their registers are stored), its free-running mode (run as
+  timer-triggered, said once) and the S31's start delay of about 10 us.
+- **Two units at once on the S31** convert on every trigger, each a word, so
+  a stream with both units carries twice the conversions a second the
+  driver's `sample_freq_hz` names.
 
 ### Wire a part to EN (reset)
 
@@ -548,6 +571,7 @@ The kinds you will see:
 | `UartRx` | bytes a serial part sent the firmware |
 | `PwmState` | the waveform on a pin a part reads as PWM (`pin`, `period_ns`, `high_ns`), when it changes |
 | `AnalogDrive` | the voltage an analog part holds on a pad (`pin`, `millivolts`) |
+| `AnalogWave` | voltages an analog part sends ahead, one every `period_ns` from the message's time (`pin`, `period_ns`, `millivolts`) |
 | `I2sFormat` | the rate, slots and slot width of one I2S direction, sent to the part on its data pad when the firmware starts it and when it changes (`receive` says which direction) |
 | `I2sOut`, `I2sIn` | samples the chip clocked out to a part, and samples a part supplied. Left out unless `--cosim-log-filter` names them: there is one of each per DMA buffer |
 | `DvpFormat`, `CsiFormat` | what the camera receiver looks like to the sensor part on it (`capturing`, `session`, and the XCLK or the lanes), when it changes |
@@ -681,12 +705,15 @@ rustup target add wasm32-unknown-unknown
   [`examples/parts/sg90`](../../examples/parts/sg90) is a complete PWM part.
 
 - **An analog source** claims its pad with `analog(pin)` and, from `poll`,
-  holds a voltage there with `hold(pin, millivolts, now)` when it changes. It
-  needs no handler: the chip reads the pad when the firmware converts.
+  holds a voltage there with `hold(pin, millivolts, now)` when it changes, or
+  sends a run of voltages one period apart with
+  `wave(pin, period_ns, millivolts, now)`. It needs no handler: the chip
+  reads the pad when the firmware converts.
   [`examples/parts/potentiometer`](../../examples/parts/potentiometer) is a
   complete analog part, and
   [`examples/parts/ntc_thermistor`](../../examples/parts/ntc_thermistor) one
-  with a model behind its voltage.
+  with a model behind its voltage, which warms toward a temperature it is
+  set to and sends each change as one run.
 
 - **An audio device** claims its data pins with `i2s(din, dout)`, by its own
   data input and output, sets `ON_MESSAGE = true`, learns each direction's

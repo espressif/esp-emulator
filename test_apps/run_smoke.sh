@@ -32,7 +32,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$HERE/smoke"
-ALL_CHIPS=(esp32c3 esp32c5 esp32c6 esp32h2 esp32p4 esp32s3 esp32s31)
+ALL_CHIPS=(esp32 esp32c3 esp32c5 esp32c6 esp32h2 esp32p4 esp32s3 esp32s31)
 
 EMU="${ESP_EMU:-esp-emu}"
 IMAGE="${ESP_EMU_IDF_DOCKER:-}"
@@ -85,7 +85,7 @@ fi
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 
 # Run an idf.py command line, in docker (repo path bind-mounted as itself, like
-# tests/common/idf_app.rs does) or against a sourced ESP-IDF.
+# the emulator's own Rust suites do) or against a sourced ESP-IDF.
 idf() {
     if [[ -n "$IMAGE" ]]; then
         docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
@@ -181,7 +181,7 @@ for chip in $CHIPS; do
     if "$EMU" --help 2>/dev/null | grep -q -- '--sd '; then
         truncate -s 8M "$dir/sd.img"
         case "$chip" in
-            esp32p4|esp32s3|esp32s31) sd=(--sd "$dir/sd.img") ;;
+            esp32|esp32p4|esp32s3|esp32s31) sd=(--sd "$dir/sd.img") ;;
             *) sd=(--sd "$dir/sd.img,cs=3") ;;
         esac
     fi

@@ -16,7 +16,9 @@ Usage:
     # Then run the proxy (TAP must be owned by current user):
     python3 tools/ws-net-proxy.py [--tap tap0] [--port 8765]
 
-    # In the browser, enter ws://localhost:8765 in the Network field.
+    # A page of your own then opens a binary WebSocket to ws://localhost:8765,
+    # one Ethernet frame per message (docs/guides/BROWSER.md, "TAP proxy").
+    # The bundled page has no TAP mode.
 
 Requirements:
     pip install websockets

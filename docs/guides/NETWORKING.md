@@ -299,6 +299,28 @@ For another subnet give both sides the same one:
 `sudo ./tools/setup-tap.sh --subnet 10.0.2.0/24 --gateway 10.0.2.1`, then
 `--net "tap,ifname=tap0,net=10.0.2.0/24"`.
 
+#### Putting the station on a LAN
+
+A TAP device is a port on an Ethernet segment, and frames leave it addressed
+as the firmware addressed them. Enslaved to a Linux bridge beside a physical
+interface, it puts the emulated station on that LAN under its own MAC: other
+machines resolve it by ARP and reach it directly, with no NAT and no `hostfwd`.
+In the other direction the station is handed only what is addressed to its
+MAC or to a group, as by an access point: unicast the bridge floods for other
+machines does not reach the firmware.
+
+```sh
+sudo ip tuntap add dev tap0 mode tap user "$USER"
+sudo ip link add br-esp type bridge
+sudo ip link set eth1 master br-esp      # the LAN-facing interface
+sudo ip link set tap0 master br-esp
+for i in eth1 tap0 br-esp; do sudo ip link set "$i" up; done
+```
+
+The built-in DHCP server answers WiFi firmware under TAP too, from `net=`
+(192.168.4.0/24 unless given). For an address on the LAN's own subnet, set it
+statically in the firmware (`esp_netif_dhcpc_stop` + `esp_netif_set_ip_info`).
+
 ### macOS (vmnet)
 
 ```sh

@@ -41,7 +41,7 @@ HTTP_TPUT_RESULT: PASSED
 ## Prerequisites
 
 - ESP-IDF environment (`. $IDF_PATH/export.sh`)
-- A built `esp-emu` (`cargo build --release`)
+- `esp-emu` on your PATH: an installed release, or `cargo build --release` in the emulator's source tree
 - Python 3 (for the host server)
 
 ## Running

@@ -94,19 +94,24 @@ void app_main(void)
     RUN_TEST("mmap",                   test_mmap);
     RUN_TEST("nvs",                    test_nvs);
     RUN_TEST("esp_timer",              test_esp_timer);
-#if SOC_RMT_SUPPORTED
+    /* ESP32's RMT, LEDC, PCNT and I2S are the first-generation blocks, with
+     * register layouts the emulator does not decode yet. */
+#if SOC_RMT_SUPPORTED && !CONFIG_IDF_TARGET_ESP32
     RUN_TEST("rmt_tx",                 test_rmt_tx);
 #endif
-#if SOC_LEDC_SUPPORTED
+#if SOC_LEDC_SUPPORTED && !CONFIG_IDF_TARGET_ESP32
     RUN_TEST("ledc",                   test_ledc);
 #endif
-#if SOC_PCNT_SUPPORTED
+#if SOC_PCNT_SUPPORTED && !CONFIG_IDF_TARGET_ESP32
     RUN_TEST("pcnt",                   test_pcnt);
+#endif
+#if EMU_TEST_ETM
+    RUN_TEST("etm",                    test_etm);
 #endif
 #if SOC_I2C_SUPPORTED
     RUN_TEST("i2c",                    test_i2c);
 #endif
-#if SOC_I2S_SUPPORTED
+#if SOC_I2S_SUPPORTED && !CONFIG_IDF_TARGET_ESP32
     RUN_TEST("i2s",                    test_i2s);
 #endif
     RUN_TEST("freertos_task",          test_freertos_task);
@@ -147,7 +152,8 @@ void app_main(void)
 #endif
 #if SOC_WIFI_SUPPORTED
     RUN_TEST("wifi",                   test_wifi);
-#if !CONFIG_IDF_TARGET_ESP32S31 /* the emulator has no CSI on ESP32-S31 yet */
+    /* The emulator has no CSI on ESP32-S31 or ESP32 yet. */
+#if !CONFIG_IDF_TARGET_ESP32S31 && !CONFIG_IDF_TARGET_ESP32
     RUN_TEST("wifi_csi",               test_wifi_csi);
 #endif
 #endif

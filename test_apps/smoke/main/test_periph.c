@@ -11,6 +11,12 @@
 #if SOC_PCNT_SUPPORTED
 #include "driver/pulse_cnt.h"
 #endif
+#if EMU_TEST_ETM
+#include "driver/gptimer.h"
+#include "driver/gptimer_etm.h"
+#include "driver/gpio_etm.h"
+#include "esp_etm.h"
+#endif
 
 /* --------------- 5. UART / printf --------------- */
 
@@ -356,6 +362,152 @@ fail:
     return false;
 }
 #endif /* SOC_PCNT_SUPPORTED */
+
+#if EMU_TEST_ETM
+/* A GPTimer alarm every 100 us through an ETM channel to a GPIO toggle task,
+ * with PCNT counting the rising edges on the same pad (GitHub issue 58). The
+ * alarm callback counts the alarms, and its ISR is what re-arms an
+ * auto-reload alarm. The pad starts low and every alarm toggles it, so the
+ * rising edges are half the alarms, rounded up. The pad is one no other case
+ * uses and none of SPI2's IO_MUX pads (`soc/spi_pins.h`), which spi_iomux
+ * keeps for the run: those are GPIO 0-5 on H2. */
+#if CONFIG_IDF_TARGET_ESP32H2
+#define ETM_TEST_GPIO 10
+#else
+#define ETM_TEST_GPIO 1
+#endif
+
+static volatile uint32_t s_etm_alarms;
+
+static bool IRAM_ATTR etm_on_alarm(gptimer_handle_t timer,
+                                   const gptimer_alarm_event_data_t *edata, void *user_ctx)
+{
+    s_etm_alarms++;
+    return false;
+}
+
+bool test_etm(void)
+{
+    const char *TN = "etm";
+    esp_err_t err;
+    bool ok = false;
+    gptimer_handle_t timer = NULL;
+    esp_etm_event_handle_t event = NULL;
+    esp_etm_task_handle_t task = NULL;
+    esp_etm_channel_handle_t chan = NULL;
+    pcnt_unit_handle_t unit = NULL;
+    pcnt_channel_handle_t pchan = NULL;
+    bool task_has_gpio = false, chan_enabled = false, unit_enabled = false;
+    bool timer_enabled = false, timer_started = false;
+
+    gptimer_config_t tcfg = {
+        .clk_src = GPTIMER_CLK_SRC_DEFAULT,
+        .direction = GPTIMER_COUNT_UP,
+        .resolution_hz = 1000000,
+    };
+    err = gptimer_new_timer(&tcfg, &timer);
+    if (err != ESP_OK) { FAIL_MSG(TN, "gptimer_new_timer: %s", esp_err_to_name(err)); goto out; }
+    gptimer_alarm_config_t acfg = {
+        .alarm_count = 100,
+        .reload_count = 0,
+        .flags.auto_reload_on_alarm = true,
+    };
+    err = gptimer_set_alarm_action(timer, &acfg);
+    if (err != ESP_OK) { FAIL_MSG(TN, "gptimer_set_alarm_action: %s", esp_err_to_name(err)); goto out; }
+    gptimer_event_callbacks_t cbs = { .on_alarm = etm_on_alarm };
+    err = gptimer_register_event_callbacks(timer, &cbs, NULL);
+    if (err != ESP_OK) { FAIL_MSG(TN, "register_event_callbacks: %s", esp_err_to_name(err)); goto out; }
+    gptimer_etm_event_config_t ecfg = { .event_type = GPTIMER_ETM_EVENT_ALARM_MATCH };
+    err = gptimer_new_etm_event(timer, &ecfg, &event);
+    if (err != ESP_OK) { FAIL_MSG(TN, "gptimer_new_etm_event: %s", esp_err_to_name(err)); goto out; }
+
+    gpio_config_t io = {
+        .pin_bit_mask = 1ULL << ETM_TEST_GPIO,
+        .mode = GPIO_MODE_INPUT_OUTPUT,
+    };
+    err = gpio_config(&io);
+    if (err != ESP_OK) { FAIL_MSG(TN, "gpio_config: %s", esp_err_to_name(err)); goto out; }
+    gpio_set_level(ETM_TEST_GPIO, 0);
+    gpio_etm_task_config_t gcfg = { .action = GPIO_ETM_TASK_ACTION_TOG };
+    err = gpio_new_etm_task(&gcfg, &task);
+    if (err != ESP_OK) { FAIL_MSG(TN, "gpio_new_etm_task: %s", esp_err_to_name(err)); goto out; }
+    err = gpio_etm_task_add_gpio(task, ETM_TEST_GPIO);
+    if (err != ESP_OK) { FAIL_MSG(TN, "gpio_etm_task_add_gpio: %s", esp_err_to_name(err)); goto out; }
+    task_has_gpio = true;
+    esp_etm_channel_config_t chcfg = {};
+    err = esp_etm_new_channel(&chcfg, &chan);
+    if (err != ESP_OK) { FAIL_MSG(TN, "esp_etm_new_channel: %s", esp_err_to_name(err)); goto out; }
+    err = esp_etm_channel_connect(chan, event, task);
+    if (err != ESP_OK) { FAIL_MSG(TN, "esp_etm_channel_connect: %s", esp_err_to_name(err)); goto out; }
+
+    pcnt_unit_config_t ucfg = {
+        .high_limit = 32767,
+        .low_limit = -1,
+    };
+    err = pcnt_new_unit(&ucfg, &unit);
+    if (err != ESP_OK) { FAIL_MSG(TN, "pcnt_new_unit: %s", esp_err_to_name(err)); goto out; }
+    pcnt_chan_config_t pcfg = {
+        .edge_gpio_num = ETM_TEST_GPIO,
+        .level_gpio_num = -1,
+    };
+    err = pcnt_new_channel(unit, &pcfg, &pchan);
+    if (err != ESP_OK) { FAIL_MSG(TN, "pcnt_new_channel: %s", esp_err_to_name(err)); goto out; }
+    err = pcnt_channel_set_edge_action(pchan, PCNT_CHANNEL_EDGE_ACTION_INCREASE,
+                                       PCNT_CHANNEL_EDGE_ACTION_HOLD);
+    if (err != ESP_OK) { FAIL_MSG(TN, "set_edge_action: %s", esp_err_to_name(err)); goto out; }
+    err = pcnt_unit_enable(unit);
+    if (err != ESP_OK) { FAIL_MSG(TN, "pcnt_unit_enable: %s", esp_err_to_name(err)); goto out; }
+    unit_enabled = true;
+    pcnt_unit_clear_count(unit);
+    err = pcnt_unit_start(unit);
+    if (err != ESP_OK) { FAIL_MSG(TN, "pcnt_unit_start: %s", esp_err_to_name(err)); goto out; }
+
+    err = esp_etm_channel_enable(chan);
+    if (err != ESP_OK) { FAIL_MSG(TN, "esp_etm_channel_enable: %s", esp_err_to_name(err)); goto out; }
+    chan_enabled = true;
+    s_etm_alarms = 0;
+    err = gptimer_enable(timer);
+    if (err != ESP_OK) { FAIL_MSG(TN, "gptimer_enable: %s", esp_err_to_name(err)); goto out; }
+    timer_enabled = true;
+    err = gptimer_start(timer);
+    if (err != ESP_OK) { FAIL_MSG(TN, "gptimer_start: %s", esp_err_to_name(err)); goto out; }
+    timer_started = true;
+    vTaskDelay(pdMS_TO_TICKS(30));
+    gptimer_stop(timer);
+    timer_started = false;
+    /* The last alarm's ISR may still be pending: let it count. */
+    vTaskDelay(1);
+
+    uint32_t alarms = s_etm_alarms;
+    int edges = 0;
+    err = pcnt_unit_get_count(unit, &edges);
+    if (err != ESP_OK) { FAIL_MSG(TN, "pcnt_unit_get_count: %s", esp_err_to_name(err)); goto out; }
+    printf("  %" PRIu32 " alarms, %d rising edges\n", alarms, edges);
+    if (alarms < 100) {
+        FAIL_MSG(TN, "%" PRIu32 " alarms in 30 ms (want 100 or more)", alarms);
+    } else if (edges != (int)((alarms + 1) / 2)) {
+        FAIL_MSG(TN, "%d rising edges for %" PRIu32 " alarms (want %" PRIu32 ")",
+                 edges, alarms, (alarms + 1) / 2);
+    } else {
+        ok = true;
+    }
+
+out:
+    if (timer_started) gptimer_stop(timer);
+    if (timer_enabled) gptimer_disable(timer);
+    if (timer) gptimer_del_timer(timer);
+    if (unit_enabled) { pcnt_unit_stop(unit); pcnt_unit_disable(unit); }
+    if (pchan) pcnt_del_channel(pchan);
+    if (unit) pcnt_del_unit(unit);
+    if (task_has_gpio) gpio_etm_task_rm_gpio(task, ETM_TEST_GPIO);
+    if (task) esp_etm_del_task(task);
+    if (event) esp_etm_del_event(event);
+    if (chan_enabled) esp_etm_channel_disable(chan);
+    if (chan) esp_etm_del_channel(chan);
+    gpio_reset_pin(ETM_TEST_GPIO);
+    return ok;
+}
+#endif /* EMU_TEST_ETM */
 
 #if SOC_I2C_SUPPORTED
 /* Nothing is wired to these pins — the emulator's I2C model ignores the GPIO

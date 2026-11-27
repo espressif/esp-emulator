@@ -135,6 +135,12 @@ bool test_spi_iomux(void);
 #if SOC_PCNT_SUPPORTED
 bool test_pcnt(void);
 #endif
+/* The ETM case needs the matrix, the GPTimer alarm event, the GPIO tasks and
+ * PCNT to count the edges. */
+#define EMU_TEST_ETM (SOC_ETM_SUPPORTED && SOC_TIMER_SUPPORT_ETM && SOC_GPIO_SUPPORT_ETM && SOC_PCNT_SUPPORTED)
+#if EMU_TEST_ETM
+bool test_etm(void);
+#endif
 #if SOC_RMT_SUPPORTED
 bool test_rmt_tx(void);
 #endif

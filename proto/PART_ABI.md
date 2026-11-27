@@ -32,7 +32,7 @@ more — a Rust `cdylib` does — and a host ignores what it does not know.
 (func (export "part_register")  (result i32))
 (func (export "part_on_pins")   (param i64 i64))
 (func (export "part_on_bus")    (param i32) (result i32))  ;; only if you claim an I2C address or an SPI chip select
-(func (export "part_on_message") (param i32))        ;; only if you are sent one-way messages (a serial line, a PWM pin, edges, I2S, a camera)
+(func (export "part_on_message") (param i32))        ;; only if you are sent one-way messages (a serial line, a PWM pin, edges, I2S, a camera, a USB port)
 (func (export "part_poll")      (param i64) (result i32))
 
 (func (export "part_on_input")  (param i32))
@@ -67,8 +67,9 @@ to it would otherwise wait for an answer that cannot come.
 
 `part_on_message` is needed only by a part that claims something the emulator
 sends one-way messages about: a serial line, a pin it reads as PWM
-(`GpioClaim.pwm_pins`) or as edges (`GpioClaim.edge_pins`), an I2S data pad, a DSI panel (`DsiClaim`), or a camera
-sensor's bus (`DvpClaim`, `CsiClaim`). A part that claims one but does not
+(`GpioClaim.pwm_pins`) or as edges (`GpioClaim.edge_pins`), an I2S data pad, a DSI panel (`DsiClaim`), a camera
+sensor's bus (`DvpClaim`, `CsiClaim`), or a USB port it is the host of
+(`UsbHostClaim`). A part that claims one but does not
 export it is refused the same way, since what the chip transmits to it, or the
 waveform on its pin, would otherwise go nowhere. A microphone that only
 supplies samples needs it too: the format it is to supply arrives that way, as
@@ -80,8 +81,9 @@ the chip waits on (`part_on_bus`), or a one-way message the part is told and
 answers, if at all, from `part_poll` (`part_on_message`). A new one-way
 channel is a new `EmulatorMessage` kind, handed over through the same export.
 The part's side is one call: everything a part sends, a `GpioDrive`, a
-`UartRx`, an `AnalogDrive`, an `I2sIn` or a camera's `CamFrame`, comes out of
-`part_poll`, so a channel the part drives adds a message kind and no export.
+`UartRx`, an `AnalogDrive` or `AnalogWave`, an `I2sIn`, a camera's
+`CamFrame` or a USB host's `UsbTransfer`, comes out of `part_poll`, so a channel the part drives adds a
+message kind and no export.
 
 ### The buffer
 
@@ -126,7 +128,9 @@ run         part_on_pins                         after each pin change
                                                  format and samples of its I2S
                                                  data pads, a run of edges of
                                                  a pin it reads as edges, the
-                                                 format of its camera receiver
+                                                 format of its camera receiver,
+                                                 the device on its USB port and
+                                                 how each transfer ended
             part_poll                            after each pin change and heartbeat
 reset       part_on_pins(levels after reset)     on each chip reset, then part_poll
 person      part_on_input  ->  part_poll         on each interaction (part_poll
@@ -475,6 +479,23 @@ the next one: stamp it.
 `examples/parts/ov2640` is a DVP sensor that does this, and
 `examples/parts/ov5647` a CSI one.
 
+A part that claims a USB-OTG port as its host (`UsbHostClaim`) is the
+computer the firmware's USB device is plugged into. A `UsbLink` tells it when
+the device is there, after the bus reset, and at what speed; from then on it
+sends `UsbTransfer` messages from `part_poll`, the first of them the
+enumeration, and each is answered with a `UsbResult` handed over like any
+other message, followed by a poll, so the next transfer can go out at once.
+`esp_cosim.proto` says what a transfer is and how it ends.
+
+- A result carries what the device sent, and a message that does not fit
+  the buffer is not handed over: ask for no more (`UsbTransfer.length`) than
+  the buffer holds beside some 40 bytes of envelope.
+- Number the transfers (`id`): results of transfers on different endpoints
+  come back in the order they end, not the order sent.
+- A `UsbLink` that says not attached, or a result that says `NO_DEVICE`,
+  voids what the part knew of the device: the firmware detached it or the
+  chip reset. Enumerate again at the next `UsbLink` that says attached.
+
 ### `part_poll(now_ns: i64) -> i32`
 
 How a part speaks without being asked. Write an `EmulatorMessage` into the
@@ -482,8 +503,9 @@ buffer and return its length, or return `0` for nothing to say. A button press
 becomes a `GpioDrive`; a sensor's timed reply becomes one `PulseDrive` (see
 [Playing a waveform](#playing-a-waveform)); a potentiometer turned becomes an `AnalogDrive`, the
 millivolts on a pad it claimed, held until the next one and put back after a
-chip reset without the part being asked. `now_ns` is the current emulated
-time.
+chip reset without the part being asked; a signal sampled at a fixed rate
+becomes `AnalogWave` pieces (see [Sending a sampled
+voltage](#sending-a-sampled-voltage)). `now_ns` is the current emulated time.
 
 Called after every pin change, after every `ClockSync` heartbeat (one per
 quantum, 1 ms of emulated time by default), and right after `part_on_message` and
@@ -770,6 +792,52 @@ it: code reading the pin, a GPIO interrupt, a PCNT unit, an RMT receiver.
 - **A zero width is a level held for no time**, and is skipped.
 - **Size.** A `PulseDrive` of 512 widths is at most 2,581 bytes; a part sizes
   its buffer for the longest it writes. A DHT22's reply is under 300 bytes.
+
+## Sending a sampled voltage
+
+A part whose output is a signal rather than a setting, such as a microphone
+envelope, a thermocouple following a heater, or a recorded trace, sends it
+ahead of the chip as `AnalogWave` pieces: the pad, the period, and one
+voltage a period. Voltage `k` holds from `sim_time_ns + k * period_ns`, the
+last until the next voltage on the pad:
+
+```rust
+// 5 ms of a 50 Hz sine around 1.65 V, sampled at 10 kHz, from `from_ns`.
+let period_ns = 100_000;
+let millivolts = (0..50)
+    .map(|k| {
+        let t = (from_ns + k * period_ns) as f64 / 1e9;
+        (1650.0 + 1000.0 * (2.0 * PI * 50.0 * t).sin()) as u32
+    })
+    .collect();
+let piece = AnalogWave { pin, period_ns, millivolts };
+Some(EmulatorMessage { sim_time_ns: from_ns, payload: Some(emulator_message::Payload::AnalogWave(piece)) })
+```
+
+Each voltage is held from its own nanosecond, wherever the chip's ticks fall,
+and every conversion of the pad reads the one in force at its own instant: a
+one-shot read, and each word of a continuous-mode frame.
+[`examples/parts/ntc_thermistor`](../examples/parts/ntc_thermistor) sends
+each change of temperature this way, as the thermistor warms or cools toward
+it.
+
+- **Send ahead.** Stamp each piece where the last one ends and keep a few
+  milliseconds sent ahead of `now_ns`; the pieces then play as one signal.
+- **A wave replaces what was sent for later.** It takes the place of every
+  voltage the pad was set to from its first one's time on, so a part whose
+  signal changes, a heater the firmware just turned on, sends the new wave
+  from that moment. An `AnalogDrive` stamped inside a wave holds until the
+  wave's next voltage.
+- **Late keeps its times.** A wave stamped with a time that has passed skips
+  the voltages whose time has passed and holds the newest of them from when
+  it arrives; the rest keep their times. Unlike a `PulseDrive` it is not
+  moved: a voltage is the signal's value at a time. The skipped ones count in
+  `ClockSync.events_fired_late`.
+- **At most 4096 voltages.** A pad keeps up to 4096 voltages ahead of the
+  clock, and a wave that does not fit is refused whole. More than one voltage
+  with a `period_ns` of 0 is refused.
+- **Size.** An `AnalogWave` of 4096 voltages up to 3300 mV is at most 8,223
+  bytes.
 
 ## When the chip resets
 

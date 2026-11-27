@@ -12,7 +12,7 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--core-rom <NAME=PATH>` | embedded | ROM ELF of a core that boots its own mask ROM, replacing the embedded one. Repeatable. A `NAME` the chip has no core for is an error; no chip has such a core yet. |
 | `--elf <PATH>...` | — | Application ELF(s) for BLE/Thread interception, panic intercepts and symbolised backtraces (e.g. `build/project.elf`). At app start the emulator reads the ELF SHA-256 the running app's descriptor records and uses the ELF it names, so pass both builds for an OTA test (`--elf old.elf new.elf`) and the new build's ELF takes over at the reboot. A `strip --strip-debug` copy of the build is recognised by its app descriptor and used with a warning; an ELF from some other build stays out, with a warning. |
 | `--no-panic-intercept` | off | With `--elf`, don't stop at the first firmware panic: the firmware's own panic handler runs and reboots or halts per its sdkconfig. For firmware that panics on purpose (task-watchdog reset tests, deliberate `abort()`); backtraces and BLE interception stay. |
-| `--efuse <PATH>` | — | Path to eFuse binary (336 bytes, QEMU-compatible). State is always saved back on exit (eFuses are one-time-programmable). |
+| `--efuse <PATH>` | — | Path to eFuse binary (QEMU-compatible: 336 bytes, 124 on ESP32). State is always saved back on exit (eFuses are one-time-programmable). |
 | `--timeout <DURATION>` | — | Exit after duration (e.g. `5s`, `500ms`) |
 | `--exit-on <STRING>` | — | Exit with code 0 when UART output contains this string |
 | `--batch-size <N>` | `50000` | Instructions per iteration |
@@ -32,13 +32,14 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--thread-sim <SPEC>` | — | IEEE 802.15.4 / Thread bridge, e.g. `bind:9001,peer:127.0.0.1:9002`. Forwards radio frames over localhost UDP to another emulator instance. Requires `--elf`. |
 | `--uart-tcp <HOST:PORT>` | — | Bridge UART0 to a TCP server (e.g. `127.0.0.1:5555`); esptool connects via `socket://`. Mirrors QEMU's `-serial tcp::PORT,server,nowait`. While active, UART0 RX comes from the socket and UART0 TX goes to it, whichever console the firmware selects (stdin disconnected); a USB-Serial/JTAG console still prints to stdout, so a binary UART0 peer and USB logging work in one session. With `--strap-mode 0x04` the socket is the USB-Serial/JTAG download port instead. |
 | `--uart1-tcp <HOST:PORT>` | — | Bridge UART1 to a TCP server. Side channel for simulating an external serial device (sensor, GPS, modem) with a host-side script — UART0 keeps stdin/stdout and `--exit-on`/`--inject-on`. Without a connected client, UART1 TX is discarded. |
-| `--psram-size <SIZE>` | `8M` (C5, S3), `16M` (P4, S31) | External RAM the board is modelled with: `4M`/`8M`/`16M`/`32M`/`64M`, or `0` for no device. Only the chips with external RAM take it. Firmware cannot choose — see [PSRAM Size](#psram-size). |
+| `--psram-size <SIZE>` | `4M` (ESP32), `8M` (C5, S3), `16M` (P4, S31) | External RAM the board is modelled with: `4M`/`8M`/`16M`/`32M`/`64M`, or `0` for no device. Only the chips with external RAM take it. Firmware cannot choose — see [PSRAM Size](#psram-size). |
 | `--strap-mode <HEX>` | — | GPIO_STRAP value at reset. `0x02` = UART download mode (jumps to ROM entry instead of firmware entry; remapped per chip, so pass `0x02` on every target); `0x04` = USB-Serial-JTAG download; `0x08` = SPI flash boot (default). Mirrors QEMU's `-global driver=esp32cN.gpio,property=strap_mode,value=…`. |
 | `--control-tcp <HOST:PORT>` | — | Host control channel: newline-delimited `reset`, `reset --soft`, `en low`, `en high`, `erase-flash`, `erase-region OFF LEN`, `write-region OFF FILE`, `read-region OFF LEN FILE`, `efuse-load FILE`, `ping`, `help`, and with `--cosim-board` the [`part` commands](PARTS.md#drive-the-parts-while-the-firmware-runs). Acts on the running machine, so one process and one output stream survive a reset — see [Host Control Channel](HOST-INTERFACES.md#host-control-channel). |
 | `--gdb <PORT>` | — | Serve a GDB remote stub on this port (QEMU's `-s` is 1234). `riscv32-esp-elf-gdb` / `xtensa-esp32s3-elf-gdb` connect with `target remote :PORT`. On dual-core chips each core is a thread (`Thread 1` = CPU0, `Thread 2` = CPU1), so `info threads`, `thread N` and breakpoints hit on CPU1 work as under QEMU. A firmware panic or CPU fault stops the target with `SIGSEGV` for inspection instead of exiting. |
 | `--gdb-halt` | off | Hold the CPU at the reset vector until a GDB client connects (QEMU's `-S`). |
 | `--cosim-board <FILE>` | — | Run the `.wasm` parts a JSON board file places, inside the emulator. See [Run parts in the command-line emulator](PARTS.md#run-parts-in-the-command-line-emulator). |
 | `--cosim-tcp <HOST:PORT>` | — | Serve the co-simulation bus on a socket, for device models that are not `.wasm` parts; goes with `--cosim-board`. See [Co-simulation over TCP](HOST-INTERFACES.md#co-simulation-over-tcp). |
+| `--usb-host <WHO>` | `builtin` | Who is the computer on the USB-OTG ports (S3, P4, S31). `builtin`: the emulator's own host enumerates the device and serves a CDC-ACM console; a co-simulation consumer that claims a port takes it over, with a bus reset. `cosim`: a port has no host until a consumer claims it and none again once it leaves, so the device is enumerated once, by the consumer. Needs `--cosim-tcp` or `--cosim-board`. |
 | `--cosim-log <FILE>` | — | With `--cosim-board`: write every message between the chip and the parts to FILE, one JSON line each, as it happens. `--cosim-log-filter KINDS` keeps only the kinds named, comma-separated, such as `GpioLevel`, `GpioDrive`, `BusRequest`, `BusReply`, `PulseDrive`, `GpioEdges` or `ChipReset` (the full list: [PARTS.md](PARTS.md)); `ClockSync`, `I2sOut`, `I2sIn` and `CamFrame` are left out unless named. |
 | `--trace <FILE>` | — | Write a per-task Chrome Trace Event trace for Perfetto; requires `--elf`. `--trace-pc-period N` sets the PC sample rate for the hot-symbol table (default 16 ticks, 0 disables). See [Execution Tracing and Profiling](HOST-INTERFACES.md#execution-tracing-and-profiling). |
 | `--log-file <FILE>` | — | Append the emulator's log lines to FILE instead of writing them to stderr; the firmware console stays on stdout. For a harness that reads stdout and stderr as one stream, where a log line written while the firmware is partway through a line otherwise lands inside it. The startup banner and fatal errors still go to stderr. |
@@ -60,7 +61,7 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--part-video <NAME=SRC>` | — | Show a `--cosim-board` part pictures (`part_video_in`), repeatable: a camera part sends them as its frames. SRC is a JPEG file, a folder of JPEG files or an MJPEG file (each looped), or `-` for an MJPEG stream on stdin, such as a camera on this machine: `ffmpeg -f avfoundation -i 0 -f mjpeg - \| esp-emu … --part-video camera=-` (`-f v4l2 -i /dev/video0` on Linux); the console then takes no input from stdin. Before each picture the part is asked what it wants, and gets it at its rate in emulated time: the JPEG as it is in a JPEG mode, else the picture as RGB888 scaled to its size. What a part refuses is logged once per reason. |
 | `--camera-mjpeg <FILE>` | — | Write the JPEG frames the camera receiver delivers to one MJPEG file, as the firmware received them: a frame its descriptor chain cut short is written short. `--camera-frames` replays the file. |
 | `--camera-png <DIR>` | — | Write every frame the camera receiver delivers to DIR as `frameNNNN.png`, raw and JPEG alike; the part of a short raw frame that never arrived is black. Stops after 500 frames. |
-| `--console <MODE>` | `auto` | Console that stdin/stdout (and `--exit-on`/`--inject-on`) follow; under `--uart-tcp` (outside download mode) only a USB-Serial/JTAG or USB CDC-ACM console reaches stdout, UART0 being the socket's. `auto`: UART0 until the firmware selects USB-Serial/JTAG in the ROM console selector (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG` builds), then EP1 — IDF's default "UART0 + USB-Serial/JTAG secondary" prints once either way. In `auto` a TinyUSB CDC-ACM console on a USB-OTG port (S3, P4, S31) joins the output and takes stdin once it has printed, unless a UART driver (a REPL) is reading UART0. `uart0`: always UART0; EP1 and CDC output discarded. `usb-jtag`: EP1 from the first byte, UART0 and CDC output discarded — needed for firmware that drives USB-Serial/JTAG outside the IDF console layer (Zephyr, esp-hal, Arduino HWCDC), which never writes the selector. `usb-cdc`: the first CDC-ACM port the host configures, alone, until it goes down; UART0, EP1 and other ports' output discarded, and stdin typed before a port is up is held for it. Refused on chips without USB-OTG and in download mode. |
+| `--console <MODE>` | `auto` | Console that stdin/stdout (and `--exit-on`/`--inject-on`) follow; under `--uart-tcp` (outside download mode) only a USB-Serial/JTAG or USB CDC-ACM console reaches stdout, UART0 being the socket's. `auto`: UART0 until the firmware selects USB-Serial/JTAG in the ROM console selector (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG` builds), then EP1 — IDF's default "UART0 + USB-Serial/JTAG secondary" prints once either way. In `auto` a CDC-ACM console on a USB-OTG port (S3, P4, S31: TinyUSB's, from `esp_tinyusb` or an Arduino sketch, or the ROM's under `CONFIG_ESP_CONSOLE_USB_CDC`) joins the output and takes stdin once it has printed, unless a UART driver (a REPL) is reading UART0. On the ESP32-S3, where that port and USB-Serial/JTAG share one PHY, a USB-Serial/JTAG secondary console shown until then is dropped from that point if the firmware has given the PHY to USB-OTG, so a `CONFIG_ESP_CONSOLE_USB_CDC` build prints once. `uart0`: always UART0; EP1 and CDC output discarded. `usb-jtag`: EP1 from the first byte, UART0 and CDC output discarded — needed for firmware that drives USB-Serial/JTAG outside the IDF console layer (Zephyr, esp-hal, Arduino HWCDC), which never writes the selector. `usb-cdc`: the first CDC-ACM port the host configures, alone, until it goes down; UART0, EP1 and other ports' output discarded, and stdin typed before a port is up is held for it. Refused on chips without USB-OTG and in download mode. |
 | `--h264-dump <FILE>` | — | Write every frame the H.264 encoder produced (ESP32-P4) to FILE on exit, as one Annex-B stream. |
 | `--hosted <SPEC>` | — | ESP-Hosted SDIO bridge: `bridge:host:/sock` (ESP32-P4 host, connects) or `bridge:slave:/sock` (ESP32-C5/C6 slave, listens; start it first). See [HOSTED.md](HOSTED.md). |
 | `--hosted-reset-gpio <PIN>` | — | Host side: the P4 GPIO wired to the slave's EN pin. When the firmware pulses it, the slave instance reboots. Must match the firmware's reset-GPIO Kconfig. |
@@ -69,7 +70,7 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--log-color <WHEN>` | `auto` | Colour the firmware's `I/W/E (..)` log lines on stdout: `auto` (a terminal, and `NO_COLOR` unset), `always` or `never`. |
 | `--config <PATH>` | `~/.esp-emu/settings.json` | Settings file to read (see below). A path given here must exist. |
 
-The co-simulation flags (`--cosim-board`, `--cosim-tcp`, `--cosim-log`, `--cosim-log-filter`, `--part-video`, `--part-wav`, `--part-wav-in`) are in the release binaries. If you build the emulator from its source, add `--features cosim-parts` (`cosim` for `--cosim-tcp` alone).
+The co-simulation flags (`--cosim-board`, `--cosim-tcp`, `--usb-host`, `--cosim-log`, `--cosim-log-filter`, `--part-video`, `--part-wav`, `--part-wav-in`) are in the release binaries. If you build the emulator from its source, add `--features cosim-parts` (`cosim` for `--cosim-tcp` alone).
 
 ## Subcommands
 
@@ -129,7 +130,7 @@ Two limits are the silicon's, and the emulator reproduces both:
 ## PSRAM Size
 
 The emulated PSRAM die reports **16 MB** by default on ESP32-P4 and ESP32-S31,
-and 8 MB on ESP32-C5 and ESP32-S3. `--psram-size` changes it:
+8 MB on ESP32-C5 and ESP32-S3, and 4 MB on ESP32. `--psram-size` changes it:
 
 ```sh
 esp-emu --chip esp32p4 --firmware app.bin --psram-size 32M
@@ -275,7 +276,7 @@ esp-emu --chip esp32c3 --firmware build/merged_flash.bin --efuse c3_rev1p1.efuse
 ```
 
 `--chip-rev` takes `MAJOR.MINOR` or ESP-IDF's integer form (`101`). The script
-covers C3, C5, C6, H2, P4, S3 and S31, writes the MAC and calibration defaults the
+covers ESP32 (v3.x, a 124-byte file), C3, C5, C6, H2, P4, S3 and S31, writes the MAC and calibration defaults the
 emulator would otherwise seed, and warns past each chip's `REV_MAX_FULL`, where
 the bootloader rejects every image. espefuse over `socket://` cannot do this:
 BLK1 is Reed-Solomon coded and the burn aborts once the seeded revision leaves
@@ -305,3 +306,26 @@ esp-emu --chip esp32p4 --firmware build/merged_flash.bin \
 `--rom` is what lifts the refusal; `--efuse` satisfies the bootloader's own
 revision check (without it the emulator warns and the app is rejected). A
 rev-3 image on the rev0 ROM is refused the same way.
+## Flash Encryption Without the First Boot
+
+A flash-encryption build normally spends its first boot generating a key,
+burning it and encrypting every partition in place. `tools/make-encrypted-flash.py`
+does that on the host instead: it encrypts the build with `espsecure` and writes
+the eFuse file that goes with it, so the chip boots with flash encryption
+already on.
+
+```sh
+# in an ESP-IDF environment (the script runs espsecure)
+python3 tools/make-encrypted-flash.py --chip esp32c3 --build-dir build -o out
+esp-emu --chip esp32c3 --firmware out/flash_enc.bin --efuse out/efuse.bin \
+  --elf build/app.elf
+```
+
+It reads `build/flasher_args.json` for what goes where and the partition table
+for which partitions are encrypted: a SPIFFS or NVS image in a plain data
+partition stays plaintext. The key is generated unless `--key` names one (the file `espsecure`
+and `espefuse` take). The newer chips get an XTS-AES-128 key in `KEY0`
+(`--key-slot`), or with `--aes256` on ESP32-P4, ESP32-S3 and ESP32-S31 a
+64-byte key in two key blocks; ESP32 gets its own cipher's key in `BLK1`.
+`--flash-size` sets the image size (default `4M`).
+

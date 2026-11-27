@@ -31,8 +31,9 @@ $ProgressPreference = 'SilentlyContinue'
 $Base = "https://github.com/$Repo"
 $Target = 'x86_64-pc-windows-gnu'
 
-# The relay release this installs: scripts/relay-version.sh --check holds it to
-# esp-emu-relay/Cargo.toml. /releases/latest is the emulator's, so no lookup.
+# The relay release this installs, the version in esp-emu-relay/Cargo.toml (the
+# emulator's release tooling checks the two agree). /releases/latest is the
+# emulator's, so no lookup.
 $RelayVersion = '1.0.0'
 if (-not $Version) { $Version = $RelayVersion }
 

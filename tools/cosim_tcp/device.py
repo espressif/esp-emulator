@@ -86,8 +86,18 @@ class Device:
     def spi_result(self, ident, selected, rx, end_ns):
         """What a transfer it clocked as the SPI master read back."""
 
+    def usb_link(self, attached, speed):
+        """The device on the USB port it is the host of came or went."""
+
+    def usb_result(self, ident, status, data, sent):
+        """How a transfer it ran as the USB host ended."""
+
     def time_waiting(self, at):
         """The chip used up what a clock holder granted and stopped at `at` ns."""
+
+    def clock_sync(self, sync):
+        """A heartbeat's counters, as `wire.clock_sync` gives them: the
+        emulator's count of what landed late or was refused, for everyone."""
 
     def i2s_format(self, receive, rate, channels, bits):
         """The transmit or receive direction's sample format."""
@@ -167,6 +177,12 @@ class Session:
         `hold_cs` chip select stays low and the next call goes on with the
         same transfer."""
         self.send(wire.spi_master_transfer(self.now if at is None else at, ident, tx, sck_hz, hold_cs))
+
+    def usb_transfer(self, ident, endpoint, setup=b"", data=b"", length=0, timeout_us=0, at=None):
+        """Run a transfer as the USB host at `at` ns (default: now); the
+        answer comes to `usb_result`, quoting `ident`."""
+        at = self.now if at is None else at
+        self.send(wire.usb_transfer(at, ident, endpoint, setup, data, length, timeout_us))
 
     def grant(self, advance_ns):
         """As a clock holder, let the chip run `advance_ns` more."""

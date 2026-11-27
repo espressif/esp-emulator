@@ -1,0 +1,12 @@
+# Enable BLE (NimBLE host) so the smoke test_app can exercise advertising.
+# The emulator stands in for the BTDM controller at the VHCI boundary, as on
+# C3 and S3 (see src/periph/radio/ble_hci.rs).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+# ESP32 has 128 KB of IRAM, and with Wi-Fi and BLE both linked in IDF v5.5
+# overflows it. Keep what need not run with the cache off in flash.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y
+CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH=y
+CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH=y

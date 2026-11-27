@@ -1,0 +1,3 @@
+# TinyUSB runs the DWC2 core in slave (FIFO) mode instead of buffer DMA, the
+# mode TinyUSB picks by default and the Arduino core ships.
+CONFIG_TINYUSB_MODE_SLAVE=y

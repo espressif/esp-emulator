@@ -36,9 +36,9 @@ In that folder:
 ```
 
 The knob starts half way, 1650 mV. The firmware reads it three times,
-`ADC: read=0 raw=2409 mv=1640`, prints `ADC_ONESHOT: done`, then a reading
-every second. The millivolts are the calibration scheme's: it takes 10 mV off
-at this voltage on the C3, so 1650 reads as 1640. In a second terminal,
+`ADC: read=0 raw=2421 mv=1650`, prints `ADC_ONESHOT: done`, then a reading
+every second. The millivolts are the chip's calibration scheme applied to the
+raw code, and they give the knob's voltage back. In a second terminal,
 connect to the emulator's control channel:
 
 ```sh
@@ -51,14 +51,16 @@ and type this line, followed by Enter:
 part knob input more
 ```
 
-It answers `ok`, and the next reading is `ADC: raw=2891 mv=1962`, the wiper at
+It answers `ok`, and the next reading is `ADC: raw=2920 mv=1980`, the wiper at
 60 %, 1980 mV. `less` turns it back 10 %, and `set:position=20` puts it at
 20 %. Ctrl-C closes `nc`; the emulator keeps running.
 
 With `--cosim-board thermistor.json` the pad carries the thermistor instead.
-It starts at 25 °C, which is also 1650 mV; `part ntc input set:temperature=50`
-moves the output to 871 mV, and `warmer` and `cooler` move it a degree at a
-time. The voltage falls as the thermistor warms.
+It starts at 25 °C, which is also 1650 mV. `part ntc input set:temperature=50`
+sets it to 50 °C, and the output falls to 871 mV over the next few seconds as
+the thermistor warms, the way a real one does: the readings run `mv=1182`,
+`977`, `909`, `885`, `877`, `873`, one a second. `warmer` and `cooler` move
+the temperature it is set to by a degree.
 
 ## What you can send
 
@@ -89,5 +91,4 @@ and run as above. Built for an ESP32-C5, C6 or H2 the firmware reads GPIO 3 as
 well (ADC1 channel 2 on the C5 and H2); for an ESP32-S31 it reads GPIO 43 at
 0 dB, and for an ESP32-P4 GPIO 20 (ADC1 channel 4), so a board for either
 wires the part's pin there; for an ESP32-S3 it reads GPIO 3 (ADC1 channel 2).
-The H2's emulated eFuse carries no ADC calibration, so on the H2 the firmware
-prints raw codes only. To write a part of your own, see [docs/guides/PARTS.md](../../../docs/guides/PARTS.md).
+To write a part of your own, see [docs/guides/PARTS.md](../../../docs/guides/PARTS.md).

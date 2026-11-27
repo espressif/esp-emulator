@@ -1,6 +1,6 @@
 # Browser Emulation Guide
 
-Run ESP32-C3/C5/C6/H2/P4/S3/S31 firmware in a web browser using the WASM build of ESP-EMU. Everything runs inside the tab: the firmware image never leaves your machine.
+Run ESP32 and ESP32-C3/C5/C6/H2/P4/S3/S31 firmware in a web browser using the WASM build of ESP-EMU. Everything runs inside the tab: the firmware image never leaves your machine.
 
 ## Hosted page
 
@@ -182,7 +182,7 @@ A page that does not use `net_set_relay` can speak to the relay itself:
 
 ### TAP proxy
 
-The bundled page has no TAP mode. A custom page can send the frames of `wifi_tx_drain()` to `ws-net-proxy` over a WebSocket and give each frame that it receives to `wifi_rx_push(frame)`, with the NAT off. The firmware then has a real Linux network interface: ICMP, inbound connections and mDNS work. The proxy and the TAP script are in this repository's `tools/`, not in a release, so run these steps from a checkout.
+The bundled page has no TAP mode. A custom page can send the frames of `wifi_tx_drain()` to `ws-net-proxy` over a WebSocket and give each frame that it receives to `wifi_rx_push(frame)`, with the NAT off. The station is handed a frame only when it is addressed to its MAC or to a group; other unicast is dropped. The firmware then has a real Linux network interface: ICMP, inbound connections and mDNS work. The proxy and the TAP script are in this repository's `tools/`, not in a release, so run these steps from a checkout.
 
 #### 1. Create TAP interface with NAT
 
@@ -195,11 +195,11 @@ This creates `tap0` with IP `192.168.4.1/24`, enables IP forwarding, and adds ip
 #### 2. Start the WebSocket proxy
 
 ```sh
-cargo build --release --features ws-proxy --bin ws-net-proxy
-./target/release/ws-net-proxy
+pip install websockets
+python3 tools/ws-net-proxy.py
 ```
 
-It listens on `ws://localhost:8765` by default.
+It listens on `ws://localhost:8765` by default. The emulator's source tree also has the same proxy in Rust (`cargo build --release --features ws-proxy --bin ws-net-proxy`), which binds `0.0.0.0` by default.
 
 #### 3. Connect from the page
 
@@ -211,7 +211,7 @@ Open a binary WebSocket to `ws://localhost:8765`. Each message is one Ethernet f
 |------|---------|-------------|
 | `--tap NAME` | `tap0` | TAP interface name |
 | `--port PORT` | `8765` | WebSocket listen port |
-| `--host ADDR` | `0.0.0.0` | Bind address |
+| `--host ADDR` | `localhost` | Bind address |
 
 #### Verifying connectivity
 
@@ -426,5 +426,5 @@ esp-emu-relay/          # esp-emu-relay: WebSocket relay for TCP and UDP, its ow
 
 tools/
 ├── setup-tap.sh        # Create/teardown TAP interface with NAT
-└── ws-net-proxy.rs     # WebSocket-to-TAP proxy for custom pages (--features ws-proxy --bin ws-net-proxy)
+└── ws-net-proxy.py     # WebSocket-to-TAP proxy for custom pages
 ```

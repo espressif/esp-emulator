@@ -41,8 +41,8 @@ VERSION=""
 CHECK_ONLY=false
 FORCE=false
 NAME="esp-emu"
-# The relay release --relay installs: scripts/relay-version.sh --check holds it
-# to esp-emu-relay/Cargo.toml. --version picks another.
+# The relay release --relay installs, the version in esp-emu-relay/Cargo.toml
+# (the emulator's release tooling checks the two agree). --version picks another.
 RELAY_VERSION="1.0.0"
 QUIET=false
 

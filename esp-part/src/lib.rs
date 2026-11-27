@@ -45,10 +45,10 @@ pub mod proto {
 }
 
 pub use proto::{
-    bus_request, claim, emulator_message::Payload, AnalogClaim, AnalogDrive, BusOp, BusReply, BusRequest,
-    CamFrame, Claim, CsiClaim, CsiFormat, DvpClaim, DvpFormat, EmulatorMessage, EnClaim, EnDrive, GpioClaim,
-    GpioDrive, GpioEdges, I2cClaim, I2cTransaction, I2sClaim, I2sFormat, I2sIn, I2sOut, PartConfig, PartState,
-    PulseDrive, PwmState, Register, SpiClaim, SpiTransfer, UartClaim, UartRx, UartTx, VideoFormat,
+    bus_request, claim, emulator_message::Payload, AnalogClaim, AnalogDrive, AnalogWave, BusOp, BusReply,
+    BusRequest, CamFrame, Claim, CsiClaim, CsiFormat, DvpClaim, DvpFormat, EmulatorMessage, EnClaim, EnDrive,
+    GpioClaim, GpioDrive, GpioEdges, I2cClaim, I2cTransaction, I2sClaim, I2sFormat, I2sIn, I2sOut, PartConfig,
+    PartState, PulseDrive, PwmState, Register, SpiClaim, SpiTransfer, UartClaim, UartRx, UartTx, VideoFormat,
 };
 
 /// What a part's `lib.rs` needs.
@@ -60,7 +60,7 @@ pub mod prelude {
     };
     pub use crate::{
         analog, audio, camera, csi, drive, drive_en, drives, dvp, en, hold, i2s, play, reads_edges, reads_pwm,
-        samples, serial, set_value, transmit, watches, Device, State,
+        samples, serial, set_value, transmit, watches, wave, Device, State,
     };
 }
 
@@ -386,6 +386,16 @@ pub fn drive_en(level: bool, at_ns: u64) -> EmulatorMessage {
 /// [`Device::poll`] returns it. Held until the next one, across a chip reset.
 pub fn hold(pin: u32, millivolts: u32, at_ns: u64) -> EmulatorMessage {
     EmulatorMessage { sim_time_ns: at_ns, payload: Some(Payload::AnalogDrive(AnalogDrive { pin, millivolts })) }
+}
+
+/// Voltages on analog pad `pin`, one every `period_ns`: `millivolts[k]`
+/// from `at_ns + k * period_ns`, the last held until the next, as
+/// [`Device::poll`] returns them. They replace what the pad was set to from
+/// `at_ns` on, so a device that changes course sends a new run from where
+/// it changed. At most 4096 voltages.
+pub fn wave(pin: u32, period_ns: u64, millivolts: Vec<u32>, at_ns: u64) -> EmulatorMessage {
+    let w = AnalogWave { pin, period_ns, millivolts };
+    EmulatorMessage { sim_time_ns: at_ns, payload: Some(Payload::AnalogWave(w)) }
 }
 
 /// What the device transmits on its serial line, `data`, at `at_ns`, as
