@@ -43,7 +43,7 @@ Every `esp-emu` flag, and the emulator-side settings firmware cannot choose for 
 | `--cosim-log <FILE>` | — | With `--cosim-board`: write every message between the chip and the parts to FILE, one JSON line each, as it happens. `--cosim-log-filter KINDS` keeps only the kinds named, comma-separated, such as `GpioLevel`, `GpioDrive`, `BusRequest`, `BusReply`, `PulseDrive`, `GpioEdges` or `ChipReset` (the full list: [PARTS.md](PARTS.md)); `ClockSync`, `I2sOut`, `I2sIn` and `CamFrame` are left out unless named. |
 | `--trace <FILE>` | — | Write a per-task Chrome Trace Event trace for Perfetto; requires `--elf`. `--trace-pc-period N` sets the PC sample rate for the hot-symbol table (default 16 ticks, 0 disables). See [Execution Tracing and Profiling](HOST-INTERFACES.md#execution-tracing-and-profiling). |
 | `--log-file <FILE>` | — | Append the emulator's log lines to FILE instead of writing them to stderr; the firmware console stays on stdout. For a harness that reads stdout and stderr as one stream, where a log line written while the firmware is partway through a line otherwise lands inside it. The startup banner and fatal errors still go to stderr. |
-| `--sd <FILE[,ro][,slot=N\|,cs=PIN][,cd=PIN]>` | — | Put an SD card in the SDMMC host's slot (ESP32-P4, ESP32-S3, ESP32-S31), or with `cs=PIN` on an SPI bus of any chip: `FILE` is a raw card image. See [SD Card](#sd-card). |
+| `--sd <FILE[,ro][,slot=N\|,cs=PIN][,cd=PIN]>` | — | Put an SD card in the SDMMC host's slot (ESP32, ESP32-P4, ESP32-S3, ESP32-S31), or with `cs=PIN` on an SPI bus of any chip: `FILE` is a raw card image. See [SD Card](#sd-card). |
 | `--i2c-dev <PORT:ADDR[,OPTS]>` | — | Put an I2C device at 7-bit `ADDR` on HP I2C port `PORT`, beside the built-in EEPROM at 0x50 (one at 0x50 answers in its place: `--i2c-dev 0:0x50,width=2` is the 24C32 IDF's `i2c_eeprom` example expects). It ACKs and reads back what was written, so a board's IO expander, touch controller, PMIC or sensor gets past init. Repeatable. Options: `width=2` (16-bit register addresses), `fill=0xNN` (initial register value, default 0xFF), `reg=REG=VAL` (preload a register, e.g. a chip ID). On a port a virtual part is wired to, parts alone answer. See [I2C Devices](#i2c-devices). The same device is a `devices` entry of type `regfile` in a `--cosim-board` file ([PARTS.md](PARTS.md#run-parts-in-the-command-line-emulator)). |
 | `--rmt-loopback <TX:RX>` | — | Feed an RMT TX channel's symbols into an RX channel, standing in for a wire between two pins (runs the stock `ir_nec_transceiver` example). Several pairs are comma-separated; channel numbers are the chip's own, so RX starts at 2 on C3/C6/H2 and at 4 on P4/S31. TX and RX on the same pin need no flag. The same wire is a `wires` entry of type `rmt-loopback` in a `--cosim-board` file. |
 | `--i2s-wav <FILE>` | — | Record what an I2S unit transmits to a WAV file, whether or not a receiver listens: a speaker amplifier on the data pad. The header carries the sample rate, channels and width the firmware programmed. |
@@ -173,8 +173,8 @@ Error: esp32p4 cannot report a 12582912-byte PSRAM; its device ID names 4M, 8M, 
 
 ## SD Card
 
-`--sd FILE` puts an SD card in the SDMMC host of an ESP32-P4, ESP32-S3 or
-ESP32-S31, so the stock `esp_vfs_fat_sdmmc_mount` mounts it. `--sd
+`--sd FILE` puts an SD card in the SDMMC host of an ESP32, ESP32-P4, ESP32-S3
+or ESP32-S31, so the stock `esp_vfs_fat_sdmmc_mount` mounts it. `--sd
 FILE,cs=PIN` puts it on an SPI bus instead, on any chip, for
 `esp_vfs_fat_sdspi_mount`. `FILE` is a raw image of the card: a FAT volume,
 with a partition table or without one.

@@ -82,8 +82,8 @@ a blank 8 MiB card with `--sd` when the `esp-emu` it runs has the flag
 ```sh
 cp -r test_apps/smoke /tmp/smoke && cd /tmp/smoke
 idf.py --preview set-target esp32c6      # --preview is needed for esp32s31, harmless otherwise
-idf.py build && idf.py merge-bin -o build/merged.bin
-esp-emu --chip esp32c6 --firmware build/merged.bin --elf build/emu_test.elf \
+idf.py build && idf.py merge-bin         # writes build/merged-binary.bin
+esp-emu --chip esp32c6 --firmware build/merged-binary.bin --elf build/emu_test.elf \
   --no-panic-intercept --timeout 240s --exit-on "RESULT_SUMMARY:"
 ```
 

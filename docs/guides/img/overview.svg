@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 210" width="880" height="210" role="img" aria-label="Your firmware image runs unchanged in esp-emu, which connects it to the console, network and tools of your computer">
+  <style>
+    .t { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #ececea; }
+    .h { font-size: 21px; font-weight: 700; }
+    .s { font-size: 14.5px; fill: #a9a9a4; }
+    .box { fill: none; stroke: #3a3a3f; stroke-width: 1.5; }
+    .hot { fill: #17171a; stroke: #ff7a1a; stroke-width: 2; }
+    .pin { stroke: #ff7a1a; stroke-width: 2; stroke-linecap: round; }
+    .arr { fill: #ff7a1a; }
+    .wire { stroke: #55555b; stroke-width: 1.5; stroke-linecap: round; }
+  </style>
+  <rect width="880" height="210" rx="28" fill="#0e0e10"/>
+
+  <rect class="box" x="36" y="50" width="230" height="110" rx="16"/>
+  <text class="t h" x="151" y="92" text-anchor="middle">Your firmware</text>
+  <text class="t s" x="151" y="118" text-anchor="middle">ESP-IDF · Arduino · Rust · more</text>
+  <text class="t s" x="151" y="139" text-anchor="middle">the same .bin you flash</text>
+
+  <path class="wire" d="M278 105 H300"/>
+  <path class="arr" d="M300 97 L314 105 L300 113 Z"/>
+
+  <path class="pin" d="M378 50 V40 M410 50 V40 M440 50 V40 M470 50 V40 M502 50 V40 M378 160 V170 M410 160 V170 M440 160 V170 M470 160 V170 M502 160 V170"/>
+  <rect class="hot" x="326" y="50" width="228" height="110" rx="16"/>
+  <text class="t h" x="440" y="92" text-anchor="middle">esp-emu</text>
+  <text class="t s" x="440" y="118" text-anchor="middle">CPU · memory · peripherals</text>
+  <text class="t s" x="440" y="139" text-anchor="middle">Wi-Fi · Bluetooth LE · Thread</text>
+
+  <path class="wire" d="M566 105 H588"/>
+  <path class="arr" d="M588 97 L602 105 L588 113 Z"/>
+
+  <rect class="box" x="614" y="50" width="230" height="110" rx="16"/>
+  <text class="t h" x="729" y="92" text-anchor="middle">Your computer</text>
+  <text class="t s" x="729" y="118" text-anchor="middle">console · network · GDB</text>
+  <text class="t s" x="729" y="139" text-anchor="middle">esptool · virtual parts · browser</text>
+</svg>
