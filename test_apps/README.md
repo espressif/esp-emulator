@@ -5,13 +5,13 @@ chain — mask ROM → 2nd-stage bootloader → app — on every supported chip.
 
 | App | What it exercises | Chips |
 |---|---|---|
-| `smoke/` | system info, NVS, flash, mmap, timers, FreeRTOS, pthread, esp_event, GPIO/RMT/LEDC/PCNT/I2C/I2S, SD card blocks written and read back (SDMMC host on P4, S3 and S31, SPI mode elsewhere), crypto (PSA, SHA/AES/HMAC/ECDSA), SMP, WiFi + DHCP, Ethernet + DHCP, BLE advertising, reset reasons, task watchdog, PIE against recorded silicon results (P4, S31), ESP32-S3 `ee.*` SIMD instructions against recorded silicon results | all |
+| `smoke/` | system info, NVS, flash, mmap, timers, FreeRTOS, pthread, esp_event, GPIO/RMT/LEDC/PCNT/ETM/I2C/I2S, SD card blocks written and read back (SDMMC host on P4, S3 and S31, SPI mode elsewhere), crypto (PSA, SHA/AES/HMAC/ECDSA), SMP, WiFi + DHCP, Ethernet + DHCP, BLE advertising, reset reasons, task watchdog, PIE against recorded silicon results (P4, S31), ESP32-S3 `ee.*` SIMD instructions against recorded silicon results | all |
 | `http_throughput/` | HTTP download throughput over WiFi (Ethernet on P4) | c3, c5, c6, p4, s3, s31 |
 | `tee/` | ESP-TEE: secure storage, attestation, TEE/REE isolation | c5, c6, h2 |
 | `flash_enc/` | flash encryption: key generation, first-boot encryption, encrypted reads | all |
 | `flash32/` | 32 MiB flash (`--flash-size`) | c3, c5, p4, s31 |
-| `psram/` | external RAM (`--psram-size`) | p4, s31 |
-| `coremark/` | CoreMark benchmark: emulation speed per chip | all |
+| `psram/` | external RAM (`--psram-size`) | esp32, p4, s3, s31 |
+| `coremark/` | CoreMark benchmark: emulation speed per chip | all but esp32 |
 | `wpa3_sta/` | WPA3-SAE station against the built-in soft AP, repeated init cycles | c3, c5, c6, s3 |
 | `unmapped_probe/` | loads and stores outside ordinary memory: which ones fault, which read 0, as measured on an ESP32-S3 board (`expected_esp32s3.txt`) | s3 |
 | `usb_cdc/` | TinyUSB CDC-ACM console on every USB-OTG port: the virtual USB host enumerates the device, the app's output arrives over the CDC port, and a typed line echoes back (`--console usb-cdc`) | s3, p4, s31 |
@@ -22,19 +22,21 @@ chain — mask ROM → 2nd-stage bootloader → app — on every supported chip.
 | `cosim_high_pads/` | virtual parts on pads above GPIO 31: an I2C device on each port, a button and an LED, through the stock `esp_driver_i2c` and `gpio` drivers | p4, s3, s31 |
 | `uart_mhz19b/` | reads an MH-Z19B CO2 sensor on UART1 with the stock UART driver; the firmware of the [CO2 board](../examples/boards/co2/README.md) and the browser CO2 demo | c3, s3, p4 |
 | `pcnt_encoder/` | counts a KY-040 rotary encoder with the stock `esp_driver_pcnt`, set up as ESP-IDF's `rotary_encoder` example; the firmware of the [encoder board](../examples/boards/encoder/README.md) and the browser encoder demo | c5, c6, h2, p4, s3, s31 |
-| `pwm_servo/` | drives an SG90 servo with LEDC, and with MCPWM where the chip has it; the firmware of the [servo board](../examples/boards/servo/README.md) and the browser servo demo | all |
-| `adc_oneshot/` | reads a voltage a part holds on an ADC pin with `adc_oneshot_read()`; the firmware of the [analog board](../examples/boards/analog/README.md) (a potentiometer and an NTC thermistor) and the browser ADC demo | c3, c5, c6, h2, s31 |
+| `pwm_servo/` | drives an SG90 servo with LEDC, and with MCPWM where the chip has it; the firmware of the [servo board](../examples/boards/servo/README.md) and the browser servo demo | all but esp32 |
+| `adc_oneshot/` | reads a voltage a part holds on an ADC pin with `adc_oneshot_read()`; the firmware of the [analog board](../examples/boards/analog/README.md) (a potentiometer and an NTC thermistor) and the browser ADC demo | all but esp32 |
 | `camera_dvp/` | the stock `esp_driver_cam` DVP controller receives raw and JPEG frames from a camera sensor played over `--cosim-tcp`; the frame buffer is in external RAM | p4, s3, s31 |
 | `jpeg_encode/` | the stock `esp_driver_jpeg` encoder on a picture in four input formats; each colour result is decoded again by the mask ROM's decoder and compared with the picture | s31 |
 | `en_watchdog/` | kicks a windowed watchdog supervisor wired to the chip's EN pin ten times, then hangs, so the part resets the chip; the firmware of the [watchdog board](../examples/boards/watchdog/README.md) | c3, c6, p4, s3 |
-| `i2s_echo/` | plays and records through the stock `i2s_std` driver against a microphone and an amplifier part; the firmware of the [audio board](../examples/boards/audio/README.md) | all |
-| `ir_nec_rx/` | decodes NEC frames from an infrared receiver part with the stock `esp_driver_rmt` receiver; the firmware of the [IR board](../examples/boards/ir/README.md) | all |
+| `i2s_echo/` | plays and records through the stock `i2s_std` driver against a microphone and an amplifier part; the firmware of the [audio board](../examples/boards/audio/README.md) | all but esp32 |
+| `ir_nec_rx/` | decodes NEC frames from an infrared receiver part with the stock `esp_driver_rmt` receiver; the firmware of the [IR board](../examples/boards/ir/README.md) | all but esp32 |
 | `oled_button/` | draws on an SSD1306 OLED over I2C and redraws on a button press; the firmware of the [OLED board](../examples/boards/oled/README.md) | c3, s3, p4 |
-| `dht22_read/` | reads a DHT22 on one wire with the GPIO driver and `esp_timer`, timing every level itself; the firmware of the [DHT board](../examples/boards/dht/README.md) | all |
-| `ws2812_strip/` | drives a WS2812 LED strip through the stock RMT transmit driver; the firmware of the [LED strip board](../examples/boards/ws2812/README.md) | all |
+| `dht22_read/` | reads a DHT22 on one wire with the GPIO driver and `esp_timer`, timing every level itself; the firmware of the [DHT board](../examples/boards/dht/README.md) | all but esp32 |
+| `ws2812_strip/` | drives a WS2812 LED strip through the stock RMT transmit driver; the firmware of the [LED strip board](../examples/boards/ws2812/README.md) | all but esp32 |
 | `camera_part/` | probes and programs a camera sensor part over SCCB and receives its frames with the stock `esp_driver_cam`: an OV2640 on DVP, and on P4 an OV5647 on MIPI CSI; the firmware of the [camera boards](../examples/boards/camera/README.md) | s3, p4 |
 | `camera_host_frames/` | the stock `esp_driver_cam` DVP controller captures JPEG frames that `--camera-frames` feeds from files | p4 |
 | `apsta_gateway/` | a soft AP of its own on 192.168.4.1/24 beside a station on the emulator's AP, with the emulator on `net=10.0.2.0/24` | c3, c5, c6, s3, s31 |
+| `adc_continuous/` | samples a voltage a potentiometer part holds on an ADC pad with the stock `adc_continuous` driver at 20 kHz, printing the conversion rate and the calibrated value once a second | all but esp32 |
+| `gpio_deep_sleep/` | enters deep sleep with a GPIO wake-up (`esp_deep_sleep_enable_gpio_wakeup`) until a button part on GPIO 3 pulls the pad low | c3 |
 
 ## Running the smoke app
 
